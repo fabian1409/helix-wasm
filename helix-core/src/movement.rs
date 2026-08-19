@@ -12,12 +12,10 @@ use crate::{
     },
     line_ending::rope_is_line_ending,
     position::char_idx_at_visual_block_offset,
-    syntax,
     text_annotations::TextAnnotations,
-    textobject::TextObject,
-    tree_sitter::Node,
-    visual_offset_from_block, Range, RopeSlice, Selection, Syntax,
+    visual_offset_from_block, Range, RopeSlice, Selection,
 };
+use crate::{syntax, textobject::TextObject, tree_sitter::Node, Syntax};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Direction {

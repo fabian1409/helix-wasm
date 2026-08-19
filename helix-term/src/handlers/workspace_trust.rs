@@ -95,9 +95,13 @@ fn select(workspace: PathBuf) -> ui::Select<TrustChoice> {
             match option {
                 TrustChoice::Trust => {
                     editor.workspace_trust.trust(&workspace);
-                    let documents: Vec<DocumentId> = editor.documents.keys().cloned().collect();
-                    for document_id in documents.iter() {
-                        editor.launch_language_servers(*document_id);
+                    #[cfg(feature = "lsp")]
+                    {
+                        let documents: Vec<DocumentId> =
+                            editor.documents.keys().cloned().collect();
+                        for document_id in documents.iter() {
+                            editor.launch_language_servers(*document_id);
+                        }
                     }
                     let _ = editor
                         .config_events

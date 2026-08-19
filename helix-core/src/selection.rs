@@ -9,9 +9,9 @@ use crate::{
     },
     line_ending::get_line_ending,
     movement::Direction,
-    tree_sitter::Node,
     Assoc, ChangeSet, RopeSlice,
 };
+use crate::tree_sitter::Node;
 use helix_stdx::range::is_subset;
 use helix_stdx::rope::{self, RopeSliceExt};
 use smallvec::{smallvec, SmallVec};

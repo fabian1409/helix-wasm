@@ -15,6 +15,10 @@ pub fn runtime() -> PathBuf {
     project_root().join("runtime")
 }
 
+pub fn wasi_sdk() -> PathBuf {
+    project_root().join("wasi-sdk")
+}
+
 pub fn ts_queries() -> PathBuf {
     runtime().join("queries")
 }

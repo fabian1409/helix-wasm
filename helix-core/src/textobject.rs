@@ -6,9 +6,9 @@ use crate::chars::{categorize_char, char_is_whitespace, CharCategory};
 use crate::graphemes::{next_grapheme_boundary, prev_grapheme_boundary};
 use crate::line_ending::rope_is_line_ending;
 use crate::movement::Direction;
-use crate::syntax;
+use crate::surround;
 use crate::Range;
-use crate::{surround, Syntax};
+use crate::{syntax, Syntax};
 
 fn find_word_boundary(slice: RopeSlice, mut pos: usize, direction: Direction, long: bool) -> usize {
     use CharCategory::{Eol, Whitespace};

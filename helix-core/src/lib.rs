@@ -53,7 +53,9 @@ pub use smartstring::SmartString;
 pub type Tendril = SmartString<smartstring::LazyCompact>;
 
 #[doc(inline)]
-pub use {regex, tree_house::tree_sitter};
+pub use regex;
+#[doc(inline)]
+pub use tree_house::tree_sitter;
 
 pub use position::{
     char_idx_at_visual_offset, coords_at_pos, pos_at_coords, softwrapped_dimensions,
@@ -65,6 +67,7 @@ pub use position::{pos_at_visual_coords, visual_coords_at_pos};
 pub use selection::{Range, Selection};
 pub use smallvec::{smallvec, SmallVec};
 pub use syntax::Syntax;
+pub use syntax::Highlight;
 
 pub use completion::CompletionItem;
 pub use diagnostic::Diagnostic;

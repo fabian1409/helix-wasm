@@ -1,8 +1,11 @@
+#[cfg(feature = "dap")]
 pub(crate) mod dap;
+#[cfg(feature = "lsp")]
 pub(crate) mod lsp;
 pub(crate) mod syntax;
 pub(crate) mod typed;
 
+#[cfg(feature = "dap")]
 pub use dap::*;
 use futures_util::FutureExt;
 use helix_event::status;
@@ -11,6 +14,7 @@ use helix_stdx::{
     rope::{self, RopeSliceExt},
 };
 use helix_vcs::{FileChange, Hunk};
+#[cfg(feature = "lsp")]
 pub use lsp::*;
 pub use syntax::*;
 use tui::{
@@ -151,7 +155,7 @@ impl Context<'_> {
     #[inline]
     pub fn callback<T, F>(
         &mut self,
-        call: impl Future<Output = helix_lsp::Result<T>> + 'static + Send,
+        call: impl Future<Output = JobResult<T>> + 'static + Send,
         callback: F,
     ) where
         T: Send + 'static,
@@ -168,6 +172,7 @@ impl Context<'_> {
 
     /// Waits on all pending jobs, and then tries to flush all pending write
     /// operations for all documents.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn block_try_flush_writes(&mut self) -> anyhow::Result<()> {
         compositor::Context {
             editor: self.editor,
@@ -178,9 +183,17 @@ impl Context<'_> {
     }
 }
 
+/// The error type used by async job callbacks — `helix_lsp::Result` when LSP is
+/// enabled (most callers are LSP requests), or a plain `anyhow::Result` fallback
+/// otherwise. Both convert into `anyhow::Error` via `?` below.
+#[cfg(feature = "lsp")]
+type JobResult<T> = helix_lsp::Result<T>;
+#[cfg(not(feature = "lsp"))]
+type JobResult<T> = anyhow::Result<T>;
+
 #[inline]
 fn make_job_callback<T, F>(
-    call: impl Future<Output = helix_lsp::Result<T>> + 'static + Send,
+    call: impl Future<Output = JobResult<T>> + 'static + Send,
     callback: F,
 ) -> std::pin::Pin<Box<impl Future<Output = Result<Callback, anyhow::Error>>>>
 where
@@ -618,6 +631,138 @@ impl MappableCommand {
         rotate_selections_last, "Make the last selection your primary one",
     );
 }
+
+// `static_commands!` above generates a fixed table of `fn(&mut Context)` entries and can't
+// take per-entry `#[cfg]` (it's a plain `macro_rules!`, not cfg-aware), so LSP/DAP-only commands
+// need a same-named fallback here when the corresponding feature is disabled, rather than being
+// omitted from the table.
+#[cfg(not(feature = "lsp"))]
+mod lsp_command_stubs {
+    use super::Context;
+
+    fn unsupported(cx: &mut Context) {
+        cx.editor.set_error("this command requires the \"lsp\" feature");
+    }
+
+    macro_rules! lsp_stub {
+        ($($name:ident),* $(,)?) => {
+            $(pub fn $name(cx: &mut Context) { unsupported(cx); })*
+        };
+    }
+
+    lsp_stub!(
+        code_action,
+        symbol_picker,
+        select_references_to_symbol_under_cursor,
+        workspace_symbol_picker,
+        diagnostics_picker,
+        workspace_diagnostics_picker,
+        goto_definition,
+        goto_declaration,
+        goto_type_definition,
+        goto_implementation,
+        goto_reference,
+        signature_help,
+        hover,
+        rename_symbol,
+        format_selections,
+        completion,
+    );
+}
+#[cfg(not(feature = "lsp"))]
+use lsp_command_stubs::*;
+
+#[cfg(not(feature = "dap"))]
+mod dap_command_stubs {
+    use super::Context;
+
+    fn unsupported(cx: &mut Context) {
+        cx.editor.set_error("this command requires the \"dap\" feature");
+    }
+
+    macro_rules! dap_stub {
+        ($($name:ident),* $(,)?) => {
+            $(pub fn $name(cx: &mut Context) { unsupported(cx); })*
+        };
+    }
+
+    dap_stub!(
+        dap_launch,
+        dap_restart,
+        dap_toggle_breakpoint,
+        dap_continue,
+        dap_pause,
+        dap_step_in,
+        dap_step_out,
+        dap_next,
+        dap_variables,
+        dap_terminate,
+        dap_edit_condition,
+        dap_edit_log,
+        dap_switch_thread,
+        dap_switch_stack_frame,
+        dap_enable_exceptions,
+        dap_disable_exceptions,
+    );
+}
+#[cfg(not(feature = "dap"))]
+use dap_command_stubs::*;
+
+// Shell filter commands spawn a real process — impossible in a browser regardless of
+// LSP/DAP, so their implementations (and the `libc`/process-based `suspend`/shell helpers
+// they share) are cfg'd out above; same-named stubs keep `static_commands!`'s table intact.
+#[cfg(target_arch = "wasm32")]
+mod shell_command_stubs {
+    use super::Context;
+
+    fn unsupported(cx: &mut Context) {
+        cx.editor
+            .set_error("shell commands are not supported in this build");
+    }
+
+    macro_rules! shell_stub {
+        ($($name:ident),* $(,)?) => {
+            $(pub fn $name(cx: &mut Context) { unsupported(cx); })*
+        };
+    }
+
+    shell_stub!(
+        shell_pipe,
+        shell_pipe_to,
+        shell_insert_output,
+        shell_append_output,
+        shell_keep_pipe,
+    );
+
+    // File pickers/explorers need real directory listing, which has no
+    // wasm32 equivalent in this MVP (no filesystem at all).
+    fn unsupported_fs(cx: &mut Context) {
+        cx.editor.set_error("this command requires filesystem access, unavailable in this build");
+    }
+
+    macro_rules! fs_stub {
+        ($($name:ident),* $(,)?) => {
+            $(pub fn $name(cx: &mut Context) { unsupported_fs(cx); })*
+        };
+    }
+
+    fs_stub!(
+        file_picker,
+        file_picker_in_current_buffer_directory,
+        file_picker_in_current_directory,
+        file_explorer,
+        file_explorer_in_current_buffer_directory,
+        file_explorer_in_current_directory,
+        goto_file,
+        goto_file_hsplit,
+        goto_file_vsplit,
+        syntax_workspace_symbol_picker,
+        global_search,
+        changed_file_picker,
+    );
+}
+#[cfg(target_arch = "wasm32")]
+use shell_command_stubs::*;
 
 impl fmt::Debug for MappableCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1329,19 +1474,23 @@ fn goto_file_end_impl(cx: &mut Context, movement: Movement) {
     doc.set_selection(view.id, selection);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn goto_file(cx: &mut Context) {
     goto_file_impl(cx, Action::Replace);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn goto_file_hsplit(cx: &mut Context) {
     goto_file_impl(cx, Action::HorizontalSplit);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn goto_file_vsplit(cx: &mut Context) {
     goto_file_impl(cx, Action::VerticalSplit);
 }
 
 /// Returns true when a selection overlaps an LSP document link range.
+#[cfg(not(target_arch = "wasm32"))]
 fn selection_overlaps_document_link(
     selection: &Range,
     link: &helix_view::document::DocumentLink,
@@ -1359,6 +1508,7 @@ fn selection_overlaps_document_link(
 /// This only builds the LSP request. The request is awaited from a background
 /// job so `goto_file_impl` does not block the UI thread while the language
 /// server resolves the target.
+#[cfg(not(target_arch = "wasm32"))]
 fn resolve_document_link_request(
     editor: &Editor,
     link: &helix_view::document::DocumentLink,
@@ -1383,6 +1533,7 @@ fn resolve_document_link_request(
 ///
 /// Prefers LSP document links when the cursor/selection overlaps a link range,
 /// falling back to the built-in path/URL detection otherwise.
+#[cfg(not(target_arch = "wasm32"))]
 fn goto_file_impl(cx: &mut Context, action: Action) {
     let (view, doc) = current_ref!(cx.editor);
     let text = doc.text().clone();
@@ -1514,6 +1665,7 @@ fn goto_file_impl(cx: &mut Context, action: Action) {
 
 /// Opens the given url. If the URL points to a valid textual file it is open in helix.
 /// Otherwise, the file is open using external program.
+#[cfg(not(target_arch = "wasm32"))]
 fn open_url(cx: &mut Context, url: Url, action: Action) {
     let doc = doc!(cx.editor);
     let rel_path = doc
@@ -1539,6 +1691,7 @@ fn open_url(cx: &mut Context, url: Url, action: Action) {
 /// This mirrors `open_url` but does not require a full `Context`, which makes
 /// it usable from async job completions such as deferred document link
 /// resolves.
+#[cfg(not(target_arch = "wasm32"))]
 fn open_url_in_callback(
     editor: &mut Editor,
     compositor: &mut Compositor,
@@ -2561,6 +2714,7 @@ fn make_search_word_bounded(cx: &mut Context) {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn global_search(cx: &mut Context) {
     #[derive(Debug)]
     struct FileResult<'a> {
@@ -3167,6 +3321,7 @@ fn append_mode(cx: &mut Context) {
     doc.set_selection(view.id, selection);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn file_picker(cx: &mut Context) {
     let root = find_workspace().0;
     if !root.exists() {
@@ -3177,6 +3332,7 @@ fn file_picker(cx: &mut Context) {
     cx.push_layer(Box::new(overlaid(picker)));
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn file_picker_in_current_buffer_directory(cx: &mut Context) {
     let doc_dir = doc!(cx.editor)
         .path()
@@ -3203,6 +3359,7 @@ fn file_picker_in_current_buffer_directory(cx: &mut Context) {
     cx.push_layer(Box::new(overlaid(picker)));
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn file_picker_in_current_directory(cx: &mut Context) {
     let cwd = helix_stdx::env::current_working_dir();
     if !cwd.exists() {
@@ -3214,6 +3371,7 @@ fn file_picker_in_current_directory(cx: &mut Context) {
     cx.push_layer(Box::new(overlaid(picker)));
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn file_explorer(cx: &mut Context) {
     let root = find_workspace().0;
     if !root.exists() {
@@ -3226,6 +3384,7 @@ fn file_explorer(cx: &mut Context) {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn file_explorer_in_current_buffer_directory(cx: &mut Context) {
     let doc_dir = doc!(cx.editor)
         .path()
@@ -3253,6 +3412,7 @@ fn file_explorer_in_current_buffer_directory(cx: &mut Context) {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn file_explorer_in_current_directory(cx: &mut Context) {
     let cwd = helix_stdx::env::current_working_dir();
     if !cwd.exists() {
@@ -3479,6 +3639,7 @@ fn jumplist_picker(cx: &mut Context) {
     cx.push_layer(Box::new(overlaid(picker)));
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn changed_file_picker(cx: &mut Context) {
     pub struct FileChangeData {
         cwd: PathBuf,
@@ -3764,6 +3925,7 @@ fn insert_with_indent(cx: &mut Context, cursor_fallback: IndentFallbackPos) {
 //
 // TODO: provide some way to cancel this, probably as part of a more general job cancellation
 // scheme
+#[cfg(not(target_arch = "wasm32"))]
 async fn make_format_callback(
     doc_id: DocumentId,
     doc_version: i32,
@@ -4151,6 +4313,7 @@ fn goto_first_diag(cx: &mut Context) {
     };
     push_jump(view, doc);
     doc.set_selection(view.id, selection);
+    #[cfg(feature = "lsp")]
     view.diagnostics_handler
         .immediately_show_diagnostic(doc, view.id);
 }
@@ -4163,6 +4326,7 @@ fn goto_last_diag(cx: &mut Context) {
     };
     push_jump(view, doc);
     doc.set_selection(view.id, selection);
+    #[cfg(feature = "lsp")]
     view.diagnostics_handler
         .immediately_show_diagnostic(doc, view.id);
 }
@@ -4187,6 +4351,7 @@ fn goto_next_diag(cx: &mut Context) {
         };
         push_jump(view, doc);
         doc.set_selection(view.id, selection);
+        #[cfg(feature = "lsp")]
         view.diagnostics_handler
             .immediately_show_diagnostic(doc, view.id);
     };
@@ -4217,6 +4382,7 @@ fn goto_prev_diag(cx: &mut Context) {
         };
         push_jump(view, doc);
         doc.set_selection(view.id, selection);
+        #[cfg(feature = "lsp")]
         view.diagnostics_handler
             .immediately_show_diagnostic(doc, view.id);
     };
@@ -5235,6 +5401,7 @@ fn unindent(cx: &mut Context) {
     exit_select_mode(cx);
 }
 
+#[cfg(feature = "lsp")]
 fn format_selections(cx: &mut Context) {
     use helix_lsp::{lsp, util::range_to_lsp_range};
 
@@ -5485,6 +5652,7 @@ fn remove_primary_selection(cx: &mut Context) {
     doc.set_selection(view.id, selection);
 }
 
+#[cfg(feature = "lsp")]
 pub fn completion(cx: &mut Context) {
     let (view, doc) = current!(cx.editor);
     let range = doc.selection(view.id).primary();
@@ -6532,22 +6700,27 @@ enum ShellBehavior {
     Append,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn shell_pipe(cx: &mut Context) {
     shell_prompt_for_behavior(cx, "pipe:".into(), ShellBehavior::Replace);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn shell_pipe_to(cx: &mut Context) {
     shell_prompt_for_behavior(cx, "pipe-to:".into(), ShellBehavior::Ignore);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn shell_insert_output(cx: &mut Context) {
     shell_prompt_for_behavior(cx, "insert-output:".into(), ShellBehavior::Insert);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn shell_append_output(cx: &mut Context) {
     shell_prompt_for_behavior(cx, "append-output:".into(), ShellBehavior::Append);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn shell_keep_pipe(cx: &mut Context) {
     shell_prompt(cx, "keep-pipe:".into(), |cx, args| {
         let shell = &cx.editor.config().shell;
@@ -6581,10 +6754,12 @@ fn shell_keep_pipe(cx: &mut Context) {
     });
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn shell_impl(shell: &[String], cmd: &str, input: Option<Rope>) -> anyhow::Result<Tendril> {
     tokio::task::block_in_place(|| helix_lsp::block_on(shell_impl_async(shell, cmd, input)))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn shell_impl_async(
     shell: &[String],
     cmd: &str,
@@ -6652,6 +6827,7 @@ async fn shell_impl_async(
     Ok(Tendril::from(output))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn shell(cx: &mut compositor::Context, cmd: &str, behavior: &ShellBehavior) {
     let pipe = match behavior {
         ShellBehavior::Replace | ShellBehavior::Ignore => true,
@@ -6733,6 +6909,7 @@ fn shell(cx: &mut compositor::Context, cmd: &str, behavior: &ShellBehavior) {
     view.ensure_cursor_in_view(doc, config.scrolloff);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn shell_prompt<F>(cx: &mut Context, prompt: Cow<'static, str>, mut callback_fn: F)
 where
     F: FnMut(&mut compositor::Context, Args) + 'static,
@@ -6756,6 +6933,7 @@ where
     );
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn shell_prompt_for_behavior(cx: &mut Context, prompt: Cow<'static, str>, behavior: ShellBehavior) {
     shell_prompt(cx, prompt, move |cx, args| {
         shell(cx, args.join(" ").as_str(), &behavior)
@@ -6763,7 +6941,7 @@ fn shell_prompt_for_behavior(cx: &mut Context, prompt: Cow<'static, str>, behavi
 }
 
 fn suspend(_cx: &mut Context) {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_arch = "wasm32")))]
     {
         // SAFETY: These are calls to standard POSIX functions.
         // Unsafe is necessary since we are calling outside of Rust.
@@ -7199,11 +7377,16 @@ fn jump_to_word(cx: &mut Context, behaviour: Movement) {
 fn lsp_or_syntax_symbol_picker(cx: &mut Context) {
     let doc = doc!(cx.editor);
 
-    if doc
+    #[cfg(feature = "lsp")]
+    let has_lsp_symbols = doc
         .language_servers_with_feature(LanguageServerFeature::DocumentSymbols)
         .next()
-        .is_some()
-    {
+        .is_some();
+    #[cfg(not(feature = "lsp"))]
+    let has_lsp_symbols = false;
+
+    if has_lsp_symbols {
+        #[cfg(feature = "lsp")]
         lsp::symbol_picker(cx);
     } else if doc.syntax().is_some() {
         syntax_symbol_picker(cx);
@@ -7216,11 +7399,16 @@ fn lsp_or_syntax_symbol_picker(cx: &mut Context) {
 fn lsp_or_syntax_workspace_symbol_picker(cx: &mut Context) {
     let doc = doc!(cx.editor);
 
-    if doc
+    #[cfg(feature = "lsp")]
+    let has_lsp_symbols = doc
         .language_servers_with_feature(LanguageServerFeature::WorkspaceSymbols)
         .next()
-        .is_some()
-    {
+        .is_some();
+    #[cfg(not(feature = "lsp"))]
+    let has_lsp_symbols = false;
+
+    if has_lsp_symbols {
+        #[cfg(feature = "lsp")]
         lsp::workspace_symbol_picker(cx);
     } else {
         syntax_workspace_symbol_picker(cx);

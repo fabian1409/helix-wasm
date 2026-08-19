@@ -1,13 +1,12 @@
 use std::fmt::Display;
 
+use crate::match_brackets::{find_matching_bracket, find_matching_bracket_fuzzy};
+use crate::Syntax;
 use crate::{
     graphemes::next_grapheme_boundary,
-    match_brackets::{
-        self, find_matching_bracket, find_matching_bracket_fuzzy, get_pair, is_close_bracket,
-        is_open_bracket,
-    },
+    match_brackets::{self, get_pair, is_close_bracket, is_open_bracket},
     movement::Direction,
-    search, Range, Selection, Syntax,
+    search, Range, Selection,
 };
 use ropey::RopeSlice;
 

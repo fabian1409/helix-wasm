@@ -1,12 +1,9 @@
 name: Build
+# Disabled for this wasm-focused fork - only gh-pages.yml runs automatically. Still
+# available to run manually from the Actions tab, or re-enable by restoring the
+# pull_request/push/merge_group/schedule triggers below.
 on:
-  pull_request:
-  push:
-    branches:
-      - master
-  merge_group:
-  schedule:
-    - cron: "00 01 * * *"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}

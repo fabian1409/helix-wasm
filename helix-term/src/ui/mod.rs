@@ -1,7 +1,9 @@
+#[cfg(feature = "lsp")]
 mod completion;
 mod document;
 pub(crate) mod editor;
 mod info;
+#[cfg(feature = "lsp")]
 pub mod lsp;
 mod markdown;
 pub mod menu;
@@ -10,6 +12,7 @@ pub mod picker;
 pub mod popup;
 pub mod prompt;
 mod select;
+#[cfg(feature = "lsp")]
 mod spinner;
 mod statusline;
 mod text;
@@ -18,6 +21,7 @@ mod text_decorations;
 use crate::compositor::Compositor;
 use crate::filter_picker_entry;
 use crate::job::{self, Callback};
+#[cfg(feature = "lsp")]
 pub use completion::Completion;
 pub use editor::EditorView;
 use helix_stdx::rope;
@@ -28,6 +32,7 @@ pub use picker::{Column as PickerColumn, FileLocation, Picker};
 pub use popup::Popup;
 pub use prompt::{Prompt, PromptEvent};
 pub use select::Select;
+#[cfg(feature = "lsp")]
 pub use spinner::{ProgressSpinners, Spinner};
 pub use text::Text;
 
@@ -195,6 +200,7 @@ pub fn raw_regex_prompt(
 }
 
 /// We want to exclude files that the editor can't handle yet
+#[cfg(not(target_arch = "wasm32"))]
 fn get_excluded_types() -> ignore::types::Types {
     use ignore::types::TypesBuilder;
     let mut type_builder = TypesBuilder::new();
@@ -210,13 +216,16 @@ fn get_excluded_types() -> ignore::types::Types {
         .expect("failed to build excluded_types")
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub struct FilePickerData {
     root: PathBuf,
     directory_style: Style,
 }
+#[cfg(not(target_arch = "wasm32"))]
 type FilePicker = Picker<PathBuf, FilePickerData>;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn file_picker(editor: &Editor, root: PathBuf) -> FilePicker {
     use ignore::WalkBuilder;
     use std::time::Instant;
@@ -315,6 +324,7 @@ pub fn file_picker(editor: &Editor, root: PathBuf) -> FilePicker {
 
 type FileExplorer = Picker<(PathBuf, bool), (PathBuf, Style)>;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn file_explorer(root: PathBuf, editor: &Editor) -> Result<FileExplorer, std::io::Error> {
     let directory_style = editor.theme.get("ui.text.directory");
     let directory_content = directory_content(&root, editor)?;
@@ -363,6 +373,7 @@ pub fn file_explorer(root: PathBuf, editor: &Editor) -> Result<FileExplorer, std
     Ok(picker)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn directory_content(root: &Path, editor: &Editor) -> Result<Vec<(PathBuf, bool)>, std::io::Error> {
     use ignore::WalkBuilder;
 
@@ -410,6 +421,7 @@ fn directory_content(root: &Path, editor: &Editor) -> Result<Vec<(PathBuf, bool)
     Ok(content)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn get_child_if_single_dir(path: &Path) -> Option<PathBuf> {
     let mut entries = path.read_dir().ok()?;
     let entry = entries.next()?.ok()?;
@@ -487,6 +499,7 @@ pub mod completers {
     }
 
     /// Completes names of language servers which are running for the current document.
+    #[cfg(feature = "lsp")]
     pub fn active_language_servers(editor: &Editor, input: &str) -> Vec<Completion> {
         let language_servers = doc!(editor).language_servers().map(|ls| ls.name());
 
@@ -498,6 +511,7 @@ pub mod completers {
 
     /// Completes names of language servers which are configured for the language of the current
     /// document.
+    #[cfg(feature = "lsp")]
     pub fn configured_language_servers(editor: &Editor, input: &str) -> Vec<Completion> {
         let language_servers = doc!(editor)
             .language_config()
@@ -558,6 +572,7 @@ pub mod completers {
             .collect()
     }
 
+    #[cfg(feature = "lsp")]
     pub fn lsp_workspace_command(editor: &Editor, input: &str) -> Vec<Completion> {
         let commands = doc!(editor)
             .language_servers_with_feature(LanguageServerFeature::WorkspaceCommand)

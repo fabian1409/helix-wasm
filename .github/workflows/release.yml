@@ -1,14 +1,9 @@
 name: Release
+# Disabled for this wasm-focused fork - only gh-pages.yml runs automatically. Still
+# available to run manually from the Actions tab, or re-enable by restoring the
+# push/pull_request triggers below.
 on:
-  push:
-    tags:
-    - '[0-9]+.[0-9]+'
-    - '[0-9]+.[0-9]+.[0-9]+'
-    branches:
-    - 'patch/ci-release-*'
-  pull_request:
-    paths:
-    - '.github/workflows/release.yml'
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

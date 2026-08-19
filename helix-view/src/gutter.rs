@@ -72,8 +72,18 @@ pub fn diagnostic<'doc>(
                 .take_while(|d| {
                     d.line == line
                         && d.provider.language_server_id().is_none_or(|id| {
-                            doc.language_servers_with_feature(LanguageServerFeature::Diagnostics)
+                            #[cfg(feature = "lsp")]
+                            {
+                                doc.language_servers_with_feature(
+                                    LanguageServerFeature::Diagnostics,
+                                )
                                 .any(|ls| ls.id() == id)
+                            }
+                            #[cfg(not(feature = "lsp"))]
+                            {
+                                let _ = id;
+                                true
+                            }
                         })
                 });
             diagnostics_on_line.max_by_key(|d| d.severity).map(|d| {
@@ -273,6 +283,7 @@ pub fn breakpoints<'doc>(
     )
 }
 
+#[cfg(feature = "dap")]
 fn execution_pause_indicator<'doc>(
     editor: &'doc Editor,
     doc: &'doc Document,
@@ -318,7 +329,11 @@ pub fn diagnostics_or_breakpoints<'doc>(
 ) -> GutterFn<'doc> {
     let mut diagnostics = diagnostic(editor, doc, view, theme, is_focused);
     let mut breakpoints = breakpoints(editor, doc, view, theme, is_focused);
+    #[cfg(feature = "dap")]
     let mut execution_pause_indicator = execution_pause_indicator(editor, doc, theme, is_focused);
+    #[cfg(not(feature = "dap"))]
+    let mut execution_pause_indicator =
+        move |_: usize, _: bool, _: bool, _: &mut String| -> Option<Style> { None };
 
     Box::new(move |line, selected, first_visual_line: bool, out| {
         execution_pause_indicator(line, selected, first_visual_line, out)

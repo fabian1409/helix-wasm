@@ -9,13 +9,16 @@ use tree_house::TREE_SITTER_MATCH_LIMIT;
 use crate::{
     chars::{char_is_line_ending, char_is_whitespace},
     graphemes::{grapheme_width, tab_width_at},
+    Position, Rope, RopeSlice, Tendril,
+};
+use crate::{
     syntax::{self, config::IndentationHeuristic},
     tree_sitter::{
         self,
         query::{InvalidPredicateError, UserPredicate},
         Capture, Grammar, InactiveQueryCursor, Node, Pattern, Query, QueryMatch, RopeInput,
     },
-    Position, Rope, RopeSlice, Syntax, Tendril,
+    Syntax,
 };
 
 /// Enum representing indentation style.
