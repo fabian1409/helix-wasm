@@ -1,3 +1,7 @@
+import WASI from "./vendor/browser_wasi_shim/wasi.js";
+import { Fd } from "./vendor/browser_wasi_shim/fd.js";
+import { ConsoleStdout } from "./vendor/browser_wasi_shim/fs_mem.js";
+
 const CELL_W = 8, CELL_H = 16;
 let COLS = 0, ROWS = 0;
 
@@ -43,7 +47,46 @@ function rgb(packed) {
   return `rgb(${(packed >> 16) & 0xff},${(packed >> 8) & 0xff},${packed & 0xff})`;
 }
 
-function main() {
+// Loads and runs the wasm32-wasip1 module's `_start` (which runs Rust's runtime init and
+// our no-op `main`, then exits) against a minimal WASI host, and returns its `exports` -
+// still fully callable afterward, since "exiting" only unwinds the `_start` call, not the
+// wasm instance itself.
+async function loadHelixWasm() {
+  const wasi = new WASI(
+    [],
+    // `HOME` is only used to build paths (config/cache dirs); nothing here touches a real
+    // filesystem, so any value satisfies `std::env::home_dir()` (used by helix-loader's
+    // config/cache/data dir lookups) without those paths ever needing to actually exist.
+    ["HOME=/home/helix"],
+    [
+      new Fd(), // stdin: unused, default Fd methods (ERRNO_NOTSUP) are fine.
+      ConsoleStdout.lineBuffered((line) => console.log(line)),
+      ConsoleStdout.lineBuffered((line) => console.error(line)),
+    ],
+  );
+
+  const { instance } = await WebAssembly.instantiateStreaming(fetch("./helix_wasm.wasm"), {
+    wasi_snapshot_preview1: wasi.wasiImport,
+  });
+
+  wasi.start(instance);
+  return instance.exports;
+}
+
+// Writes `notation`'s UTF-8 bytes into the scratch buffer `hx_key_buf_ptr` exposes (see
+// `KEY_BUF` in helix-wasm/src/main.rs) and calls `hx_key` to consume them. Memory's
+// backing ArrayBuffer must be re-read on every call, since growing wasm memory replaces it.
+function sendKey(exports, notation) {
+  const bytes = new TextEncoder().encode(notation);
+  if (bytes.length > exports.hx_key_buf_capacity()) return;
+  const ptr = exports.hx_key_buf_ptr();
+  new Uint8Array(exports.memory.buffer, ptr, bytes.length).set(bytes);
+  exports.hx_key(bytes.length);
+}
+
+async function main() {
+  const exports = await loadHelixWasm();
+
   const canvas = document.getElementById("screen");
   const ctx = canvas.getContext("2d");
 
@@ -66,10 +109,10 @@ function main() {
   }
 
   function draw() {
-    Module._hx_render();
-    const ptr = Module._hx_frame_ptr();
-    const len = Module._hx_frame_len();
-    const cells = new Uint32Array(Module.HEAPU8.buffer, ptr, len / 4);
+    exports.hx_render();
+    const ptr = exports.hx_frame_ptr();
+    const len = exports.hx_frame_len();
+    const cells = new Uint32Array(exports.memory.buffer, ptr, len / 4);
     const cellCount = cells.length / 3;
 
     ctx.clearRect(0, 0, COLS * CELL_W, ROWS * CELL_H);
@@ -87,9 +130,9 @@ function main() {
       }
     }
 
-    const col = Module._hx_cursor_col();
-    const row = Module._hx_cursor_row();
-    const kind = Module._hx_cursor_kind();
+    const col = exports.hx_cursor_col();
+    const row = exports.hx_cursor_row();
+    const kind = exports.hx_cursor_kind();
     // 0 = block, 1 = bar, 2 = underline, 3 = hidden (see hx_cursor_kind in main.rs).
     if (col >= 0 && row >= 0 && kind !== 3) {
       const x = col * CELL_W;
@@ -102,22 +145,22 @@ function main() {
   }
 
   layoutCanvas();
-  Module._hx_init(COLS, ROWS);
+  exports.hx_init(COLS, ROWS);
   draw();
 
   window.addEventListener("resize", () => {
     layoutCanvas();
-    Module._hx_resize(COLS, ROWS);
+    exports.hx_resize(COLS, ROWS);
     draw();
   });
 
   window.addEventListener("keydown", (e) => {
     const notation = keyToNotation(e);
     if (notation === null) return;
-    Module.ccall("hx_key", null, ["string"], [notation]);
+    sendKey(exports, notation);
     draw();
     e.preventDefault();
   });
 }
 
-var Module = { onRuntimeInitialized: main };
+main();
