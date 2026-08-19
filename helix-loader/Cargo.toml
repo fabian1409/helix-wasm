@@ -27,11 +27,20 @@ sha2 = "0.11"
 globset.workspace = true
 log = "0.4"
 
-# TODO: these two should be on !wasm32 only
-
-# cloning/compiling tree-sitter grammars
-cc = { version = "1" }
-threadpool = { version = "1.0" }
 tempfile.workspace = true
 
 tree-house.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# cloning/compiling tree-sitter grammars
+cc = { version = "1" }
+threadpool = { version = "1.0" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# No dlopen on wasm32 (libloading doesn't support it), so grammars are statically linked
+# in via `tree-sitter-language` instead - see grammar.rs. `tree-house` (the crate name
+# used above) doesn't forward that feature from the `tree-house-bindings` crate it wraps,
+# so it's requested directly here; Cargo unifies the feature onto the same
+# `tree-house-bindings` instance `tree-house` itself depends on.
+tree-house-bindings = { version = "0.3", features = ["tree-sitter-language"] }
+tree-sitter-rust = "0.23"

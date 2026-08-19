@@ -535,6 +535,108 @@ pub mod tasks {
         Ok(())
     }
 
+    /// Pinned wasi-sdk release: https://github.com/WebAssembly/wasi-sdk/releases
+    const WASI_SDK_RELEASE_TAG: &str = "wasi-sdk-24";
+    const WASI_SDK_VERSION: &str = "24.0";
+
+    /// Downloads and extracts the pinned wasi-sdk release (a plain clang + wasi-libc
+    /// distribution) into `wasi-sdk/`, giving `cargo xtask wasm` a C toolchain that can
+    /// target `wasm32-wasip1` without needing Emscripten's much heavier JS-runtime/node/
+    /// python bundle.
+    pub fn wasi_sdk_install() -> Result<(), DynError> {
+        use std::process::Command;
+
+        let dir = crate::path::wasi_sdk();
+        if dir.join("bin/clang").is_file() {
+            println!("wasi-sdk already installed at {}", dir.display());
+            return Ok(());
+        }
+        std::fs::create_dir_all(&dir)?;
+
+        let asset = format!("wasi-sdk-{WASI_SDK_VERSION}-x86_64-linux.tar.gz");
+        let url = format!(
+            "https://github.com/WebAssembly/wasi-sdk/releases/download/{WASI_SDK_RELEASE_TAG}/{asset}"
+        );
+        let archive = dir.join(&asset);
+
+        let status = Command::new("curl")
+            .args(["--fail", "--location", "--silent", "--show-error", "-o"])
+            .arg(&archive)
+            .arg(&url)
+            .status()?;
+        if !status.success() {
+            return Err(format!("failed to download {url}").into());
+        }
+
+        let status = Command::new("tar")
+            .arg("xzf")
+            .arg(&archive)
+            .args(["--strip-components=1", "-C"])
+            .arg(&dir)
+            .status()?;
+        std::fs::remove_file(&archive).ok();
+        if !status.success() {
+            return Err(format!("failed to extract {}", archive.display()).into());
+        }
+
+        println!(
+            "Installed wasi-sdk {WASI_SDK_VERSION} into {}. `cargo xtask wasm` will use it automatically.",
+            dir.display()
+        );
+        Ok(())
+    }
+
+    pub fn wasm() -> Result<(), DynError> {
+        use std::process::Command;
+
+        let mut cmd = Command::new("cargo");
+        cmd.args([
+            "build",
+            "-p",
+            "helix-wasm",
+            "--target",
+            "wasm32-wasip1",
+            "--release",
+        ]);
+
+        let wasi_sdk = crate::path::wasi_sdk();
+        let clang = wasi_sdk.join("bin/clang");
+        if clang.is_file() {
+            // wasi-sdk's clang has the wasm32-wasi target and sysroot baked in, so no
+            // extra --sysroot/-target flags are needed beyond pointing `cc` at it.
+            cmd.env("CC_wasm32_wasip1", &clang);
+            cmd.env("CXX_wasm32_wasip1", wasi_sdk.join("bin/clang++"));
+            cmd.env("AR_wasm32_wasip1", wasi_sdk.join("bin/llvm-ar"));
+        } else if helix_stdx::env::which("clang").is_err() {
+            return Err(concat!(
+                "wasi-sdk not installed and no clang on PATH — run ",
+                "`cargo xtask wasi-sdk-install` first"
+            )
+            .into());
+        }
+
+        let status = cmd.status()?;
+
+        if !status.success() {
+            return Err("cargo build for helix-wasm failed".into());
+        }
+
+        // helix-wasm/www/ is both the source for the hand-written JS/HTML and the directory
+        // you serve directly — no separate assembled dist/ tree. Just drop the freshly built
+        // binary and a copy of the logo (index.html references both as plain `./foo`) in
+        // alongside them; both are build artifacts (.gitignore'd), not checked in.
+        let root = crate::path::project_root();
+        let www = root.join("helix-wasm/www");
+        std::fs::copy(
+            root.join("target/wasm32-wasip1/release/helix_wasm.wasm"),
+            www.join("helix_wasm.wasm"),
+        )?;
+        std::fs::copy(root.join("logo.svg"), www.join("logo.svg"))?;
+
+        println!("Built helix-wasm for wasm32-wasip1 — serve helix-wasm/www/ directly.");
+        Ok(())
+    }
+
     pub fn print_help() {
         println!(
             "
@@ -557,6 +659,10 @@ Usage: Run with `cargo xtask <task>`, eg. `cargo xtask docgen`.
                                    winning capture per span for an arbitrary input file.
         theme-check [themes]       Check that the theme files in runtime/themes/ are valid for the
                                    given themes, or all themes if none are specified.
+        wasi-sdk-install           Download and extract the pinned wasi-sdk release into wasi-sdk/.
+        wasm                       Build helix-wasm for wasm32-wasip1 (using wasi-sdk/ automatically,
+                                   falling back to PATH if wasi-sdk/ isn't installed) and drop the
+                                   binary into helix-wasm/www/, which is then servable as-is.
 "
         );
     }
@@ -573,6 +679,8 @@ fn main() -> Result<(), DynError> {
             "indent-check" => tasks::indentcheck(args)?,
             "highlight-check" => tasks::highlightcheck(args)?,
             "theme-check" => tasks::themecheck(args)?,
+            "wasi-sdk-install" => tasks::wasi_sdk_install()?,
+            "wasm" => tasks::wasm()?,
             invalid => return Err(format!("Invalid task name: {}", invalid).into()),
         },
     };

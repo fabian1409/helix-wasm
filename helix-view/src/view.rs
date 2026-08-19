@@ -1,10 +1,13 @@
+#[cfg(feature = "lsp")]
+use crate::document::DocumentColorSwatches;
+#[cfg(feature = "lsp")]
+use crate::handlers::diagnostics::DiagnosticsHandler;
 use crate::{
     align_view,
     annotations::diagnostics::InlineDiagnostics,
-    document::{DocumentColorSwatches, DocumentInlayHints},
+    document::DocumentInlayHints,
     editor::{GutterConfig, GutterType},
     graphics::Rect,
-    handlers::diagnostics::DiagnosticsHandler,
     Align, Document, DocumentId, Theme, ViewId,
 };
 
@@ -171,6 +174,7 @@ pub struct View {
     // Document into entity component like structure. That is a huge refactor
     // left to future work. For now we treat all views as focused and give them
     // each their own handler.
+    #[cfg(feature = "lsp")]
     pub diagnostics_handler: DiagnosticsHandler,
 }
 
@@ -196,6 +200,7 @@ impl View {
             object_selections: Vec::new(),
             gutters,
             doc_revisions: HashMap::new(),
+            #[cfg(feature = "lsp")]
             diagnostics_handler: DiagnosticsHandler::new(),
         }
     }
@@ -493,6 +498,7 @@ impl View {
         };
         let config = doc.config.load();
 
+        #[cfg(feature = "lsp")]
         if config.lsp.display_color_swatches {
             if let Some(DocumentColorSwatches {
                 color_swatches,
@@ -510,9 +516,12 @@ impl View {
         }
 
         let width = self.inner_width(doc);
+        #[cfg(feature = "lsp")]
         let enable_cursor_line = self
             .diagnostics_handler
             .show_cursorline_diagnostics(doc, self.id);
+        #[cfg(not(feature = "lsp"))]
+        let enable_cursor_line = false;
         let config = config.inline_diagnostics.prepare(width, enable_cursor_line);
         if !config.disabled() {
             let cursor = doc

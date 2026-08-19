@@ -1,0 +1,2 @@
+// Vendored from @bjorn3/browser_wasi_shim v0.4.2 (MIT OR Apache-2.0). See README.md.
+let Debug=class Debug{enable(enabled){this.log=createLogger(enabled===undefined?true:enabled,this.prefix)}get enabled(){return this.isEnabled}constructor(isEnabled){this.isEnabled=isEnabled;this.prefix="wasi:";this.enable(isEnabled)}};function createLogger(enabled,prefix){if(enabled){const a=console.log.bind(console,"%c%s","color: #265BA0",prefix);return a}else{return()=>{}}}export const debug=new Debug(false);

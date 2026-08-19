@@ -13,6 +13,7 @@ use helix_core::snippets::{ActiveSnippet, SnippetRenderCtx};
 use helix_core::syntax::config::LanguageServerFeature;
 use helix_core::text_annotations::{InlineAnnotation, Overlay};
 use helix_event::TaskController;
+#[cfg(feature = "lsp")]
 use helix_lsp::util::lsp_pos_to_pos;
 use helix_stdx::faccess::{copy_metadata, readonly};
 use helix_vcs::{DiffHandle, DiffProviderRegistry};
@@ -204,6 +205,7 @@ pub struct Document {
     pub(crate) modified_since_accessed: bool,
 
     pub(crate) diagnostics: Vec<Diagnostic>,
+    #[cfg(feature = "lsp")]
     pub(crate) language_servers: HashMap<LanguageServerName, Arc<Client>>,
 
     diff_handle: Option<DiffHandle>,
@@ -214,11 +216,14 @@ pub struct Document {
 
     pub readonly: bool,
 
+    #[cfg(feature = "lsp")]
     pub previous_diagnostic_ids: HashMap<LanguageServerId, String>,
 
     /// Annotations for LSP document color swatches
+    #[cfg(feature = "lsp")]
     pub color_swatches: Option<DocumentColorSwatches>,
     /// Cached LSP document links for navigation (e.g. goto_file).
+    #[cfg(feature = "lsp")]
     pub document_links: Vec<DocumentLink>,
     // NOTE: ideally this would live on the handler for color swatches. This is blocked on a
     // large refactor that would make `&mut Editor` available on the `DocumentDidChange` event.
@@ -236,6 +241,7 @@ pub struct Document {
     syn_loader: Arc<ArcSwap<syntax::Loader>>,
 }
 
+#[cfg(feature = "lsp")]
 #[derive(Debug, Clone, Default)]
 pub struct DocumentColorSwatches {
     pub color_swatches: Vec<InlineAnnotation>,
@@ -249,6 +255,7 @@ pub struct DocumentHighlights {
     pub ranges: Vec<std::ops::Range<usize>>,
 }
 
+#[cfg(feature = "lsp")]
 #[derive(Debug, Clone)]
 pub struct DocumentLink {
     /// Character offsets in the document for the link range.
@@ -636,6 +643,7 @@ fn read_and_detect_encoding<R: std::io::Read + ?Sized>(
 /// Encodes the text inside `rope` into the given `encoding` and writes the
 /// encoded output into `writer.` As a `Rope` can only contain valid UTF-8,
 /// replacement characters may appear in the encoded text.
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn to_writer<'a, W: tokio::io::AsyncWriteExt + Unpin + ?Sized>(
     writer: &'a mut W,
     encoding_with_bom_info: (&'static Encoding, bool),
@@ -715,6 +723,7 @@ where
     *mut_ref = f(mem::take(mut_ref));
 }
 
+#[cfg(feature = "lsp")]
 use helix_lsp::{lsp, Client, LanguageServerId, LanguageServerName};
 use helix_stdx::Url;
 
@@ -758,6 +767,7 @@ impl Document {
             last_saved_time: SystemTime::now(),
             last_saved_revision: 0,
             modified_since_accessed: false,
+            #[cfg(feature = "lsp")]
             language_servers: HashMap::new(),
             diff_handle: None,
             config,
@@ -767,12 +777,15 @@ impl Document {
             jump_labels: HashMap::new(),
             document_highlights: HashMap::new(),
             code_action_hints: HashSet::new(),
+            #[cfg(feature = "lsp")]
             color_swatches: None,
+            #[cfg(feature = "lsp")]
             document_links: Vec::new(),
             color_swatch_controller: TaskController::new(),
             document_highlight_controllers: HashMap::new(),
             code_action_controllers: HashMap::new(),
             syn_loader,
+            #[cfg(feature = "lsp")]
             previous_diagnostic_ids: HashMap::new(),
             pull_diagnostic_controller: TaskController::new(),
             document_link_controller: TaskController::new(),
@@ -791,6 +804,7 @@ impl Document {
     // TODO: async fn?
     /// Create a new document from `path`. Encoding is auto-detected, but it can be manually
     /// overwritten with the `encoding` parameter.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn open(
         path: &Path,
         mut encoding: Option<&'static Encoding>,
@@ -839,6 +853,7 @@ impl Document {
 
     /// The same as [`format`], but only returns formatting changes if auto-formatting
     /// is configured.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn auto_format(
         &self,
         editor: &Editor,
@@ -854,6 +869,7 @@ impl Document {
     /// to format it nicely.
     // We can't use anyhow::Result here since the output of the future has to be
     // clonable to be used as shared future. So use a custom error type.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn format(
         &self,
         editor: &Editor,
@@ -979,6 +995,7 @@ impl Document {
         Some(fut.boxed())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn save<P: Into<PathBuf>>(
         &mut self,
         path: Option<P>,
@@ -995,6 +1012,7 @@ impl Document {
 
     /// The `Document`'s text is encoded according to its encoding and written to the file located
     /// at its `path()`.
+    #[cfg(not(target_arch = "wasm32"))]
     fn save_impl(
         &mut self,
         path: Option<PathBuf>,
@@ -1939,6 +1957,7 @@ impl Document {
     }
 
     /// maintains the order as configured in the language_servers TOML array
+    #[cfg(feature = "lsp")]
     pub fn language_servers(&self) -> impl Iterator<Item = &helix_lsp::Client> {
         self.language_config().into_iter().flat_map(move |config| {
             config.language_servers.iter().filter_map(move |features| {
@@ -1952,10 +1971,12 @@ impl Document {
         })
     }
 
+    #[cfg(feature = "lsp")]
     pub fn remove_language_server_by_name(&mut self, name: &str) -> Option<Arc<Client>> {
         self.language_servers.remove(name)
     }
 
+    #[cfg(feature = "lsp")]
     pub fn language_servers_with_feature(
         &self,
         feature: LanguageServerFeature,
@@ -1975,6 +1996,7 @@ impl Document {
         })
     }
 
+    #[cfg(feature = "lsp")]
     pub fn supports_language_server(&self, id: LanguageServerId) -> bool {
         self.language_servers().any(|l| l.id() == id)
     }
@@ -2140,14 +2162,17 @@ impl Document {
     // -- LSP methods
 
     #[inline]
+    #[cfg(feature = "lsp")]
     pub fn identifier(&self) -> lsp::TextDocumentIdentifier {
         lsp::TextDocumentIdentifier::new(self.url().unwrap())
     }
 
+    #[cfg(feature = "lsp")]
     pub fn versioned_identifier(&self) -> lsp::VersionedTextDocumentIdentifier {
         lsp::VersionedTextDocumentIdentifier::new(self.url().unwrap(), self.version)
     }
 
+    #[cfg(feature = "lsp")]
     pub fn position(
         &self,
         view_id: ViewId,
@@ -2162,6 +2187,7 @@ impl Document {
         )
     }
 
+    #[cfg(feature = "lsp")]
     pub fn lsp_diagnostic_to_diagnostic(
         text: &Rope,
         language_config: Option<&LanguageConfiguration>,
@@ -2292,6 +2318,7 @@ impl Document {
     }
 
     /// clears diagnostics for a given language server id if set, otherwise all diagnostics are cleared
+    #[cfg(feature = "lsp")]
     pub fn clear_diagnostics_for_language_server(&mut self, id: LanguageServerId) {
         self.diagnostics
             .retain(|d| d.provider.language_server_id() != Some(id));
@@ -2488,6 +2515,7 @@ impl Document {
         self.inlay_hints = Default::default();
     }
 
+    #[cfg(feature = "lsp")]
     pub fn has_language_server_with_feature(&self, feature: LanguageServerFeature) -> bool {
         self.language_servers_with_feature(feature).next().is_some()
     }

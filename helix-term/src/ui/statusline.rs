@@ -1,5 +1,6 @@
 use helix_core::indent::IndentStyle;
 use helix_core::{coords_at_pos, encoding, unicode::width::UnicodeWidthStr, Position};
+#[cfg(feature = "lsp")]
 use helix_lsp::lsp::DiagnosticSeverity;
 use helix_view::document::DEFAULT_LANGUAGE_NAME;
 use helix_view::{
@@ -9,7 +10,16 @@ use helix_view::{
     Document, Editor, View,
 };
 
+#[cfg(feature = "lsp")]
 use crate::ui::ProgressSpinners;
+
+/// The statusline's spinner-progress handle: the real `&ProgressSpinners` when LSP is
+/// enabled (all its callers live behind `render_lsp_spinner`, gated the same way), or
+/// a unit placeholder otherwise so `RenderContext` doesn't need two shapes.
+#[cfg(feature = "lsp")]
+type SpinnersHandle<'a> = &'a ProgressSpinners;
+#[cfg(not(feature = "lsp"))]
+type SpinnersHandle<'a> = ();
 
 use helix_view::editor::StatusLineElement as StatusLineElementID;
 use tui::buffer::Buffer as Surface;
@@ -20,7 +30,7 @@ pub struct RenderContext<'a> {
     pub doc: &'a Document,
     pub view: &'a View,
     pub focused: bool,
-    pub spinners: &'a ProgressSpinners,
+    pub spinners: SpinnersHandle<'a>,
     pub parts: RenderBuffer<'a>,
 }
 
@@ -30,7 +40,7 @@ impl<'a> RenderContext<'a> {
         doc: &'a Document,
         view: &'a View,
         focused: bool,
-        spinners: &'a ProgressSpinners,
+        spinners: SpinnersHandle<'a>,
     ) -> Self {
         RenderContext {
             editor,
@@ -131,7 +141,10 @@ where
 {
     match element_id {
         helix_view::editor::StatusLineElement::Mode => render_mode,
+        #[cfg(feature = "lsp")]
         helix_view::editor::StatusLineElement::Spinner => render_lsp_spinner,
+        #[cfg(not(feature = "lsp"))]
+        helix_view::editor::StatusLineElement::Spinner => render_nothing,
         helix_view::editor::StatusLineElement::FileBaseName => render_file_base_name,
         helix_view::editor::StatusLineElement::FileName => render_file_name,
         helix_view::editor::StatusLineElement::FileAbsolutePath => render_file_absolute_path,
@@ -144,7 +157,10 @@ where
         helix_view::editor::StatusLineElement::FileIndentStyle => render_file_indent_style,
         helix_view::editor::StatusLineElement::FileType => render_file_type,
         helix_view::editor::StatusLineElement::Diagnostics => render_diagnostics,
+        #[cfg(feature = "lsp")]
         helix_view::editor::StatusLineElement::WorkspaceDiagnostics => render_workspace_diagnostics,
+        #[cfg(not(feature = "lsp"))]
+        helix_view::editor::StatusLineElement::WorkspaceDiagnostics => render_nothing,
         helix_view::editor::StatusLineElement::Selections => render_selections,
         helix_view::editor::StatusLineElement::PrimarySelectionLength => {
             render_primary_selection_length
@@ -191,6 +207,14 @@ where
     write(context, Span::styled(content, style));
 }
 
+#[cfg(not(feature = "lsp"))]
+fn render_nothing<'a, F>(_context: &mut RenderContext<'a>, _write: F)
+where
+    F: Fn(&mut RenderContext<'a>, Span<'a>) + Copy,
+{
+}
+
+#[cfg(feature = "lsp")]
 fn render_lsp_spinner<'a, F>(context: &mut RenderContext<'a>, write: F)
 where
     F: Fn(&mut RenderContext<'a>, Span<'a>) + Copy,
@@ -261,6 +285,7 @@ where
     }
 }
 
+#[cfg(feature = "lsp")]
 fn render_workspace_diagnostics<'a, F>(context: &mut RenderContext<'a>, write: F)
 where
     F: Fn(&mut RenderContext<'a>, Span<'a>) + Copy,

@@ -1,6 +1,7 @@
 use arc_swap::{access::Map, ArcSwap};
 use futures_util::Stream;
 use helix_core::{diagnostic::Severity, pos_at_coords, syntax, Range, Selection};
+#[cfg(feature = "lsp")]
 use helix_lsp::{
     lsp::{self, notification::Notification},
     util::lsp_range_to_range,
@@ -39,12 +40,12 @@ use std::{
 #[cfg_attr(windows, allow(unused_imports))]
 use anyhow::{Context, Error};
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_arch = "wasm32")))]
 use {signal_hook::consts::signal, signal_hook_tokio::Signals};
-#[cfg(windows)]
+#[cfg(any(windows, target_arch = "wasm32"))]
 type Signals = futures_util::stream::Empty<()>;
 
-#[cfg(all(not(windows), not(feature = "integration")))]
+#[cfg(all(not(windows), not(target_arch = "wasm32"), not(feature = "integration")))]
 use tui::backend::TerminaBackend;
 
 #[cfg(all(windows, not(feature = "integration")))]
@@ -53,17 +54,28 @@ use tui::backend::CrosstermBackend;
 #[cfg(feature = "integration")]
 use tui::backend::TestBackend;
 
-#[cfg(all(not(windows), not(feature = "integration")))]
+#[cfg(target_arch = "wasm32")]
+use tui::backend::WasmBackend;
+
+#[cfg(all(
+    not(windows),
+    not(target_arch = "wasm32"),
+    not(feature = "integration")
+))]
 type TerminalBackend = TerminaBackend;
 #[cfg(all(windows, not(feature = "integration")))]
 type TerminalBackend = CrosstermBackend<std::io::Stdout>;
 #[cfg(feature = "integration")]
 type TerminalBackend = TestBackend;
+#[cfg(target_arch = "wasm32")]
+type TerminalBackend = WasmBackend;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_arch = "wasm32")))]
 type TerminalEvent = termina::Event;
 #[cfg(windows)]
 type TerminalEvent = crossterm::event::Event;
+#[cfg(target_arch = "wasm32")]
+type TerminalEvent = std::convert::Infallible;
 
 type Terminal = tui::terminal::Terminal<TerminalBackend>;
 
@@ -76,6 +88,7 @@ pub struct Application {
 
     signals: Signals,
     jobs: Jobs,
+    #[cfg(feature = "lsp")]
     lsp_progress: LspProgressMap,
 
     theme_mode: Option<theme::Mode>,
@@ -106,7 +119,11 @@ impl Application {
         theme_parent_dirs.extend(helix_loader::runtime_dirs().iter().cloned());
         let theme_loader = theme::Loader::new(&theme_parent_dirs);
 
-        #[cfg(all(not(windows), not(feature = "integration")))]
+        #[cfg(all(
+            not(windows),
+            not(target_arch = "wasm32"),
+            not(feature = "integration")
+        ))]
         let backend = TerminaBackend::new((&config.editor).into())
             .context("failed to create terminal backend")?;
         #[cfg(all(windows, not(feature = "integration")))]
@@ -114,6 +131,9 @@ impl Application {
 
         #[cfg(feature = "integration")]
         let backend = TestBackend::new(120, 150);
+
+        #[cfg(target_arch = "wasm32")]
+        let backend = WasmBackend::new(80, 24);
 
         let theme_mode = backend.get_theme_mode();
         let mut terminal = Terminal::new(backend)?;
@@ -141,6 +161,14 @@ impl Application {
 
         let jobs = Jobs::new();
 
+        // No CLI args, stdin, or filesystem in a browser — always start from a single
+        // empty buffer.
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = &args;
+            editor.new_file(Action::VerticalSplit);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         if args.load_tutor {
             let path = helix_loader::runtime_file(Path::new("tutor"));
             editor.open(&path, Action::VerticalSplit)?;
@@ -232,9 +260,9 @@ impl Application {
                 .unwrap_or_else(|_| editor.new_file(Action::VerticalSplit));
         }
 
-        #[cfg(windows)]
+        #[cfg(any(windows, target_arch = "wasm32"))]
         let signals = futures_util::stream::empty();
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_arch = "wasm32")))]
         let signals = Signals::new([
             signal::SIGTSTP,
             signal::SIGCONT,
@@ -251,6 +279,7 @@ impl Application {
             config,
             signals,
             jobs,
+            #[cfg(feature = "lsp")]
             lsp_progress: LspProgressMap::new(),
             theme_mode,
         };
@@ -291,6 +320,7 @@ impl Application {
         self.terminal.draw(pos, kind).unwrap();
     }
 
+#[cfg(not(target_arch = "wasm32"))]
     pub async fn event_loop<S>(&mut self, input_stream: &mut S)
     where
         S: Stream<Item = std::io::Result<TerminalEvent>> + Unpin,
@@ -304,6 +334,7 @@ impl Application {
         }
     }
 
+#[cfg(not(target_arch = "wasm32"))]
     pub async fn event_loop_until_idle<S>(&mut self, input_stream: &mut S) -> bool
     where
         S: Stream<Item = std::io::Result<TerminalEvent>> + Unpin,
@@ -442,12 +473,15 @@ impl Application {
                 // Re-detect .editorconfig
                 document.detect_editor_config();
                 document.detect_language(&lang_loader);
-                let diagnostics = Editor::doc_diagnostics(
-                    &self.editor.language_servers,
-                    &self.editor.diagnostics,
-                    document,
-                );
-                document.replace_diagnostics(diagnostics, &[], None);
+                #[cfg(feature = "lsp")]
+                {
+                    let diagnostics = Editor::doc_diagnostics(
+                        &self.editor.language_servers,
+                        &self.editor.diagnostics,
+                        document,
+                    );
+                    document.replace_diagnostics(diagnostics, &[], None);
+                }
             }
 
             self.terminal.reconfigure((&default_config.editor).into())?;
@@ -505,13 +539,13 @@ impl Application {
         let _ = editor.set_theme(theme);
     }
 
-    #[cfg(windows)]
-    // no signal handling available on windows
+    #[cfg(any(windows, target_arch = "wasm32"))]
+    // no signal handling available on windows or in a browser
     pub async fn handle_signals(&mut self, _signal: ()) -> bool {
         true
     }
 
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_arch = "wasm32")))]
     pub async fn handle_signals(&mut self, signal: i32) -> bool {
         match signal {
             signal::SIGTSTP => {
@@ -669,11 +703,13 @@ impl Application {
                 self.handle_config_events(event);
                 self.render().await;
             }
+            #[cfg(feature = "lsp")]
             EditorEvent::LanguageServerMessage((id, call)) => {
                 self.handle_language_server_message(call, id).await;
                 // limit render calls for fast language server messages
                 helix_event::request_redraw();
             }
+            #[cfg(feature = "dap")]
             EditorEvent::DebuggerEvent((id, payload)) => {
                 let needs_render = self.editor.handle_debugger_message(id, payload).await;
                 if needs_render {
@@ -697,6 +733,7 @@ impl Application {
         false
     }
 
+#[cfg(not(target_arch = "wasm32"))]
     pub async fn handle_terminal_events(&mut self, event: std::io::Result<TerminalEvent>) {
         #[cfg(not(windows))]
         use termina::escape::csi;
@@ -774,6 +811,7 @@ impl Application {
         }
     }
 
+    #[cfg(feature = "lsp")]
     pub async fn handle_language_server_message(
         &mut self,
         call: helix_lsp::Call,
@@ -1188,6 +1226,7 @@ impl Application {
         }
     }
 
+#[cfg(feature = "lsp")]
     fn handle_show_message(&mut self, message_type: lsp::MessageType, message: String) {
         if self.config.load().editor.lsp.display_messages {
             match message_type {
@@ -1198,6 +1237,7 @@ impl Application {
         }
     }
 
+#[cfg(feature = "lsp")]
     fn handle_show_document(
         &mut self,
         params: lsp::ShowDocumentParams,
@@ -1279,7 +1319,11 @@ impl Application {
         self.terminal.restore()
     }
 
-    #[cfg(all(not(feature = "integration"), not(windows)))]
+    #[cfg(all(
+        not(feature = "integration"),
+        not(windows),
+        not(target_arch = "wasm32")
+    ))]
     pub fn event_stream(&self) -> impl Stream<Item = std::io::Result<TerminalEvent>> + Unpin {
         use termina::{escape::csi, Terminal as _};
         let reader = self.terminal.backend().terminal().event_reader();
@@ -1319,6 +1363,7 @@ impl Application {
         DummyEventStream
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn run<S>(&mut self, input_stream: &mut S) -> Result<i32, Error>
     where
         S: Stream<Item = std::io::Result<TerminalEvent>> + Unpin,
@@ -1339,6 +1384,7 @@ impl Application {
         Ok(self.editor.exit_code)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn close(&mut self) -> Vec<anyhow::Error> {
         // [NOTE] we intentionally do not return early for errors because we
         //        want to try to run as much cleanup as we can, regardless of
@@ -1363,8 +1409,54 @@ impl Application {
 
         errs
     }
+
+    /// Dispatches a single key event through the same compositor path
+    /// `handle_terminal_events` uses for the generic (non-resize, non-CSI) case,
+    /// then synchronously renders if the event changed anything. There's no
+    /// async executor in the wasm build, so `render()` (which never actually
+    /// awaits anything — it's only `async` to share code with the native event
+    /// loop) is driven to completion with a trivial single-poll executor.
+    #[cfg(target_arch = "wasm32")]
+    pub fn handle_key(&mut self, event: helix_view::input::KeyEvent) {
+        let mut cx = crate::compositor::Context {
+            editor: &mut self.editor,
+            jobs: &mut self.jobs,
+            scroll: None,
+        };
+        let should_redraw = self
+            .compositor
+            .handle_event(&Event::Key(event), &mut cx);
+        if should_redraw && !self.editor.should_close() {
+            futures_executor::block_on(self.render());
+        }
+    }
+
+    /// Resizes the terminal/compositor, mirroring `handle_terminal_events`'s
+    /// `TerminalEvent::Resize` arm.
+    #[cfg(target_arch = "wasm32")]
+    pub fn resize(&mut self, cols: u16, rows: u16) {
+        // `Terminal::resize` only resizes its own front/back diffing buffers - the backend owns
+        // its cell buffer separately and needs telling too (real terminal backends don't, since
+        // their "size" just queries the OS terminal, but `WasmBackend` stores its own).
+        self.terminal.backend_mut().resize(cols, rows);
+        self.terminal
+            .resize(Rect::new(0, 0, cols, rows))
+            .expect("Unable to resize terminal");
+        let area = self.terminal.size();
+        self.compositor.resize(area);
+        futures_executor::block_on(self.render());
+    }
+
+    /// Renders a frame and returns the backend so the browser-facing glue layer
+    /// can read the cell buffer out of it.
+    #[cfg(target_arch = "wasm32")]
+    pub fn render_frame(&mut self) -> &WasmBackend {
+        futures_executor::block_on(self.render());
+        self.terminal.backend()
+    }
 }
 
+#[cfg(feature = "lsp")]
 impl ui::menu::Item for lsp::MessageActionItem {
     type Data = ();
     fn format(&self, _data: &Self::Data) -> tui::widgets::Row<'_> {

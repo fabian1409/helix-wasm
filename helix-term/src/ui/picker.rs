@@ -590,6 +590,9 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
         let (path_or_id, range) = (self.file_fn.as_ref()?)(editor, current)?;
 
         match path_or_id {
+            #[cfg(target_arch = "wasm32")]
+            PathOrId::Path(_) => None,
+            #[cfg(not(target_arch = "wasm32"))]
             PathOrId::Path(path) => {
                 if let Some(doc) = editor.document_by_path(path) {
                     return Some((Preview::EditorDocument(doc), range));
