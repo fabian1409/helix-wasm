@@ -1,4 +1,7 @@
 target
+helix-wasm/www/helix_wasm.wasm
+helix-wasm/www/logo.svg
+wasi-sdk
 .direnv
 helix-term/rustfmt.toml
 result

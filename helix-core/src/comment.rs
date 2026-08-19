@@ -3,10 +3,8 @@
 
 use smallvec::SmallVec;
 
-use crate::{
-    syntax::config::BlockCommentToken, Change, Range, Rope, RopeSlice, Selection, Tendril,
-    Transaction,
-};
+use crate::syntax::config::BlockCommentToken;
+use crate::{Change, Range, Rope, RopeSlice, Selection, Tendril, Transaction};
 use helix_stdx::rope::RopeSliceExt;
 use std::borrow::Cow;
 

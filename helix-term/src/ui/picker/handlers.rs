@@ -99,12 +99,15 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> AsyncHook
                     else {
                         return;
                     };
-                    let diagnostics = helix_view::Editor::doc_diagnostics(
-                        &editor.language_servers,
-                        &editor.diagnostics,
-                        doc,
-                    );
-                    doc.replace_diagnostics(diagnostics, &[], None);
+                    #[cfg(feature = "lsp")]
+                    {
+                        let diagnostics = helix_view::Editor::doc_diagnostics(
+                            &editor.language_servers,
+                            &editor.diagnostics,
+                            doc,
+                        );
+                        doc.replace_diagnostics(diagnostics, &[], None);
+                    }
                     doc.syntax = Some(syntax);
                 });
             });

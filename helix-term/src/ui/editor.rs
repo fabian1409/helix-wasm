@@ -1,15 +1,17 @@
+#[cfg(feature = "lsp")]
+use crate::handlers::completion::CompletionItem;
+#[cfg(feature = "lsp")]
+use crate::ui::{Completion, ProgressSpinners};
 use crate::{
     commands::{self, OnKeyCallback, OnKeyCallbackKind},
     compositor::{Component, Context, Event, EventResult},
     events::{OnModeSwitch, PostCommand},
-    handlers::completion::CompletionItem,
     key,
     keymap::{KeymapResult, Keymaps},
     ui::{
         document::{render_document, LinePos, TextRenderer},
         statusline,
         text_decorations::{self, Decoration, DecorationManager, InlineDiagnostics},
-        Completion, ProgressSpinners,
     },
 };
 
@@ -40,7 +42,9 @@ pub struct EditorView {
     on_next_key: Option<(OnKeyCallback, OnKeyCallbackKind)>,
     pseudo_pending: Vec<KeyEvent>,
     pub(crate) last_insert: (commands::MappableCommand, Vec<InsertEvent>),
+    #[cfg(feature = "lsp")]
     pub(crate) completion: Option<Completion>,
+    #[cfg(feature = "lsp")]
     spinners: ProgressSpinners,
     /// Tracks if the terminal window is focused by reaction to terminal focus events
     terminal_focused: bool,
@@ -64,12 +68,15 @@ impl EditorView {
             on_next_key: None,
             pseudo_pending: Vec::new(),
             last_insert: (commands::MappableCommand::normal_mode, Vec::new()),
+            #[cfg(feature = "lsp")]
             completion: None,
+            #[cfg(feature = "lsp")]
             spinners: ProgressSpinners::default(),
             terminal_focused: true,
         }
     }
 
+    #[cfg(feature = "lsp")]
     pub fn spinners_mut(&mut self) -> &mut ProgressSpinners {
         &mut self.spinners
     }
@@ -103,6 +110,7 @@ impl EditorView {
         }
 
         // Set DAP highlights, if needed.
+        #[cfg(feature = "dap")]
         if let Some(frame) = editor.current_stack_frame() {
             let dap_line = frame.line.saturating_sub(1);
             let style = theme.get("ui.highlight.frameline");
@@ -139,6 +147,7 @@ impl EditorView {
             }
         }
 
+        #[cfg(feature = "lsp")]
         if let Some(overlay) = Self::doc_document_link_highlights(doc, theme) {
             overlays.push(overlay);
         }
@@ -194,9 +203,12 @@ impl EditorView {
         }
         let width = view.inner_width(doc);
         let config = doc.config.load();
+        #[cfg(feature = "lsp")]
         let enable_cursor_line = view
             .diagnostics_handler
             .show_cursorline_diagnostics(doc, view.id);
+        #[cfg(not(feature = "lsp"))]
+        let enable_cursor_line = false;
         let inline_diagnostic_config = config.inline_diagnostics.prepare(width, enable_cursor_line);
         decorations.add_decoration(InlineDiagnostics::new(
             doc,
@@ -240,8 +252,11 @@ impl EditorView {
             .clip_top(view.area.height.saturating_sub(1))
             .clip_bottom(1); // -1 from bottom to remove commandline
 
-        let mut context =
-            statusline::RenderContext::new(editor, doc, view, is_focused, &self.spinners);
+        #[cfg(feature = "lsp")]
+        let spinners = &self.spinners;
+        #[cfg(not(feature = "lsp"))]
+        let spinners = ();
+        let mut context = statusline::RenderContext::new(editor, doc, view, is_focused, spinners);
 
         statusline::render(&mut context, statusline_area, surface);
     }
@@ -494,6 +509,7 @@ impl EditorView {
         })
     }
 
+    #[cfg(feature = "lsp")]
     pub fn doc_document_link_highlights(
         doc: &Document,
         theme: &Theme,
@@ -1098,6 +1114,7 @@ impl EditorView {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[cfg(feature = "lsp")]
     pub fn set_completion(
         &mut self,
         editor: &mut Editor,
@@ -1122,10 +1139,13 @@ impl EditorView {
     }
 
     pub fn clear_completion(&mut self, editor: &mut Editor) -> Option<OnKeyCallback> {
-        self.completion = None;
         let mut on_next_key: Option<OnKeyCallback> = None;
-        editor.handlers.completions.request_controller.restart();
-        editor.handlers.completions.active_completions.clear();
+        #[cfg(feature = "lsp")]
+        {
+            self.completion = None;
+            editor.handlers.completions.request_controller.restart();
+            editor.handlers.completions.active_completions.clear();
+        }
         if let Some(last_completion) = editor.last_completion.take() {
             match last_completion {
                 CompleteAction::Triggered => (),
@@ -1158,7 +1178,10 @@ impl EditorView {
     }
 
     pub fn handle_idle_timeout(&mut self, cx: &mut commands::Context) -> EventResult {
+        #[cfg(feature = "lsp")]
         commands::compute_inlay_hints_for_all_views(cx.editor, cx.jobs);
+        #[cfg(not(feature = "lsp"))]
+        let _ = cx;
 
         EventResult::Ignored(None)
     }
@@ -1280,6 +1303,7 @@ impl EditorView {
                         return EventResult::Ignored(None);
                     };
 
+                    #[cfg(feature = "dap")]
                     if let Some(char_idx) =
                         view.pos_at_visual_coords(doc, coords.row as u16, coords.col as u16, true)
                     {
@@ -1287,6 +1311,8 @@ impl EditorView {
                         commands::dap_toggle_breakpoint_impl(cxt, path, line);
                         return EventResult::Consumed(None);
                     }
+                    #[cfg(not(feature = "dap"))]
+                    let _ = path;
                 }
 
                 EventResult::Ignored(None)
@@ -1500,6 +1526,7 @@ impl Component for EditorView {
                         Mode::Insert => {
                             // let completion swallow the event if necessary
                             let mut consumed = false;
+                            #[cfg(feature = "lsp")]
                             if let Some(completion) = &mut self.completion {
                                 let res = {
                                     // use a fake context here
@@ -1598,6 +1625,7 @@ impl Component for EditorView {
                 EventResult::Consumed(None)
             }
             Event::FocusLost => {
+                #[cfg(not(target_arch = "wasm32"))]
                 if context.editor.config().auto_save.focus_lost {
                     let options = commands::WriteAllOptions {
                         force: false,
@@ -1729,6 +1757,7 @@ impl Component for EditorView {
             }
         }
 
+        #[cfg(feature = "lsp")]
         if let Some(completion) = self.completion.as_mut() {
             completion.render(area, surface, cx);
         }

@@ -1,5 +1,6 @@
 use std::{borrow::Cow, fmt};
 
+#[cfg(feature = "lsp")]
 use helix_lsp::{lsp, LanguageServerId};
 
 use crate::Editor;
@@ -47,6 +48,7 @@ impl Action {
     }
 
     /// Builds an `Action` from an LSP code action or command.
+    #[cfg(feature = "lsp")]
     pub fn lsp(server_id: LanguageServerId, action: lsp::CodeActionOrCommand) -> Self {
         let title = match &action {
             lsp::CodeActionOrCommand::CodeAction(action) => action.title.clone(),
@@ -99,6 +101,7 @@ impl Action {
 /// This roughly matches VSCode's ordering: code actions are sorted first by the category declared
 /// on the `kind` field, then by whether they fix a diagnostic, then by whether they are marked
 /// preferred. See <https://github.com/microsoft/vscode/blob/eaec601dd69aeb4abb63b9601a6f44308c8d8c6e/src/vs/editor/contrib/codeAction/browser/codeActionWidget.ts>.
+#[cfg(feature = "lsp")]
 fn lsp_code_action_priority(action: &lsp::CodeActionOrCommand) -> u8 {
     // The `kind` field is open ended in the LSP spec, but in practice a closed set of common values
     // (mostly suggested by the spec) is used. VSCode shows these as menu headers; we don't, but we

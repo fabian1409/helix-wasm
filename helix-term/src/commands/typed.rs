@@ -68,6 +68,7 @@ impl CommandCompleter {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn exit(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
@@ -88,6 +89,7 @@ fn exit(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow:
     quit(cx, Args::default(), event)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn force_exit(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
@@ -108,6 +110,7 @@ fn force_exit(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> a
     quit(cx, Args::default(), event)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn quit(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyhow::Result<()> {
     log::debug!("quitting...");
 
@@ -126,6 +129,7 @@ fn quit(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyhow
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn force_quit(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
@@ -137,6 +141,7 @@ fn force_quit(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> 
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn open(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
@@ -145,6 +150,7 @@ fn open(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow:
     open_impl(cx, args, Action::Replace)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn open_impl(cx: &mut compositor::Context, args: Args, action: Action) -> anyhow::Result<()> {
     for arg in args {
         let (path, pos) = crate::args::parse_file(&arg);
@@ -181,6 +187,7 @@ fn buffer_close_by_ids_impl(
     doc_ids: &[DocumentId],
     force: bool,
 ) -> anyhow::Result<()> {
+    #[cfg(not(target_arch = "wasm32"))]
     cx.block_try_flush_writes()?;
 
     let (modified_ids, modified_names): (Vec<_>, Vec<_>) = doc_ids
@@ -377,6 +384,7 @@ fn buffer_previous(
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn write_impl(
     cx: &mut compositor::Context,
     path: Option<&str>,
@@ -463,6 +471,7 @@ fn write_impl(
 }
 
 /// Trim all whitespace preceding line-endings in a document.
+#[cfg(not(target_arch = "wasm32"))]
 fn trim_trailing_whitespace(doc: &mut Document, view_id: ViewId) {
     let text = doc.text();
     let mut pos = 0;
@@ -491,6 +500,7 @@ fn trim_trailing_whitespace(doc: &mut Document, view_id: ViewId) {
 }
 
 /// Trim any extra line-endings after the final line-ending.
+#[cfg(not(target_arch = "wasm32"))]
 fn trim_final_newlines(doc: &mut Document, view_id: ViewId) {
     let rope = doc.text();
     let mut text = rope.slice(..);
@@ -512,6 +522,7 @@ fn trim_final_newlines(doc: &mut Document, view_id: ViewId) {
 }
 
 /// Ensure that the document is terminated with a line ending.
+#[cfg(not(target_arch = "wasm32"))]
 fn insert_final_newline(doc: &mut Document, view_id: ViewId) {
     let text = doc.text();
     if text.len_chars() > 0 && line_ending::get_line_ending(&text.slice(..)).is_none() {
@@ -528,6 +539,7 @@ pub struct WriteOptions {
     pub code_actions: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn write(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
@@ -544,6 +556,7 @@ fn write(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow
     )
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn force_write(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
@@ -560,6 +573,7 @@ fn force_write(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> 
     )
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn write_buffer_close(
     cx: &mut compositor::Context,
     args: Args,
@@ -583,6 +597,7 @@ fn write_buffer_close(
     buffer_close_by_ids_impl(cx, &document_ids, false)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn force_write_buffer_close(
     cx: &mut compositor::Context,
     args: Args,
@@ -616,6 +631,7 @@ fn new_file(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> an
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn format(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
@@ -776,6 +792,7 @@ fn later(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn write_quit(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
@@ -794,6 +811,7 @@ fn write_quit(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> a
     quit(cx, Args::default(), event)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn force_write_quit(
     cx: &mut compositor::Context,
     args: Args,
@@ -857,6 +875,7 @@ pub struct WriteAllOptions {
     pub code_actions: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn write_all_impl(
     cx: &mut compositor::Context,
     options: WriteAllOptions,
@@ -966,6 +985,7 @@ pub fn write_all_impl(
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn write_all(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
@@ -982,6 +1002,7 @@ fn write_all(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> an
     )
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn force_write_all(
     cx: &mut compositor::Context,
     args: Args,
@@ -1002,6 +1023,7 @@ fn force_write_all(
     )
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn write_all_quit(
     cx: &mut compositor::Context,
     args: Args,
@@ -1022,6 +1044,7 @@ fn write_all_quit(
     quit_all_impl(cx, false)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn force_write_all_quit(
     cx: &mut compositor::Context,
     args: Args,
@@ -1043,6 +1066,7 @@ fn force_write_all_quit(
 }
 
 fn quit_all_impl(cx: &mut compositor::Context, force: bool) -> anyhow::Result<()> {
+    #[cfg(not(target_arch = "wasm32"))]
     cx.block_try_flush_writes()?;
     if !force {
         buffers_remaining_impl(cx.editor)?;
@@ -1585,6 +1609,7 @@ fn get_character_info(
 }
 
 /// Reload the [`Document`] from its source file.
+#[cfg(not(target_arch = "wasm32"))]
 fn reload(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
@@ -1606,6 +1631,7 @@ fn reload(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyh
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn reload_all(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
@@ -1678,6 +1704,7 @@ fn reload_all(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> 
 }
 
 /// Update the [`Document`] if it has been modified.
+#[cfg(not(target_arch = "wasm32"))]
 fn update(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
@@ -1699,6 +1726,7 @@ fn update(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyho
     }
 }
 
+#[cfg(feature = "lsp")]
 fn lsp_workspace_command(
     cx: &mut compositor::Context,
     args: Args,
@@ -1799,6 +1827,7 @@ fn lsp_workspace_command(
     Ok(())
 }
 
+#[cfg(feature = "lsp")]
 fn lsp_restart(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
@@ -1884,6 +1913,7 @@ fn lsp_restart(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> 
     }
 }
 
+#[cfg(feature = "lsp")]
 fn lsp_stop(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
@@ -2082,7 +2112,11 @@ fn vsplit(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyho
     if args.is_empty() {
         split(cx.editor, Action::VerticalSplit);
     } else {
+        #[cfg(not(target_arch = "wasm32"))]
         open_impl(cx, args, Action::VerticalSplit)?;
+        #[cfg(target_arch = "wasm32")]
+        cx.editor
+            .set_error("opening files by path is not supported in this build");
     }
 
     Ok(())
@@ -2096,7 +2130,11 @@ fn hsplit(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyho
     if args.is_empty() {
         split(cx.editor, Action::HorizontalSplit);
     } else {
+        #[cfg(not(target_arch = "wasm32"))]
         open_impl(cx, args, Action::HorizontalSplit)?;
+        #[cfg(target_arch = "wasm32")]
+        cx.editor
+            .set_error("opening files by path is not supported in this build");
     }
 
     Ok(())
@@ -2122,6 +2160,7 @@ fn hsplit_new(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> 
     Ok(())
 }
 
+#[cfg(feature = "dap")]
 fn debug_eval(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
@@ -2144,6 +2183,7 @@ fn debug_eval(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> a
     Ok(())
 }
 
+#[cfg(feature = "dap")]
 fn debug_start(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
@@ -2157,6 +2197,7 @@ fn debug_start(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> 
     dap_start_impl(cx, name.as_deref(), None, Some(args))
 }
 
+#[cfg(feature = "dap")]
 fn debug_remote(
     cx: &mut compositor::Context,
     args: Args,
@@ -2178,6 +2219,7 @@ fn debug_remote(
     dap_start_impl(cx, name.as_deref(), address, Some(args))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn tutor(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
@@ -2424,12 +2466,15 @@ fn language(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> any
     }
     doc.detect_indent_and_line_ending();
 
-    let id = doc.id();
-    cx.editor.refresh_language_servers(id);
-    let doc = doc_mut!(cx.editor);
-    let diagnostics =
-        Editor::doc_diagnostics(&cx.editor.language_servers, &cx.editor.diagnostics, doc);
-    doc.replace_diagnostics(diagnostics, &[], None);
+    #[cfg(feature = "lsp")]
+    {
+        let id = doc.id();
+        cx.editor.refresh_language_servers(id);
+        let doc = doc_mut!(cx.editor);
+        let diagnostics =
+            Editor::doc_diagnostics(&cx.editor.language_servers, &cx.editor.diagnostics, doc);
+        doc.replace_diagnostics(diagnostics, &[], None);
+    }
     Ok(())
 }
 
@@ -2551,6 +2596,7 @@ fn tree_sitter_subtree(
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn open_config(
     cx: &mut compositor::Context,
     _args: Args,
@@ -2565,6 +2611,7 @@ fn open_config(
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn open_workspace_config(
     cx: &mut compositor::Context,
     _args: Args,
@@ -2579,6 +2626,7 @@ fn open_workspace_config(
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn open_log(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
@@ -2601,6 +2649,7 @@ fn refresh_config(
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn append_output(
     cx: &mut compositor::Context,
     args: Args,
@@ -2614,6 +2663,7 @@ fn append_output(
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn insert_output(
     cx: &mut compositor::Context,
     args: Args,
@@ -2627,14 +2677,17 @@ fn insert_output(
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn pipe_to(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
     pipe_impl(cx, args, event, &ShellBehavior::Ignore)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn pipe(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
     pipe_impl(cx, args, event, &ShellBehavior::Replace)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn pipe_impl(
     cx: &mut compositor::Context,
     args: Args,
@@ -2649,6 +2702,7 @@ fn pipe_impl(
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn run_shell_command(
     cx: &mut compositor::Context,
     args: Args,
@@ -2809,6 +2863,7 @@ pub struct MoveBufferOptions {
     pub force: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn move_buffer(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
@@ -2818,6 +2873,7 @@ fn move_buffer(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> 
     move_buffer_impl(cx, new_path, MoveBufferOptions { force: false })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn force_move_buffer(
     cx: &mut compositor::Context,
     args: Args,
@@ -2831,6 +2887,7 @@ fn force_move_buffer(
     move_buffer_impl(cx, new_path, MoveBufferOptions { force: true })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn move_buffer_impl(
     cx: &mut compositor::Context,
     new_path: PathBuf,
@@ -3004,6 +3061,7 @@ const WRITE_NO_CODE_ACTIONS_FLAG: Flag = Flag {
 };
 
 pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "exit",
         aliases: &["x", "xit"],
@@ -3016,6 +3074,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "exit!",
         aliases: &["x!", "xit!"],
@@ -3028,6 +3087,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "quit",
         aliases: &["q"],
@@ -3039,6 +3099,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "quit!",
         aliases: &["q!"],
@@ -3050,6 +3111,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "open",
         aliases: &["o", "edit", "e"],
@@ -3143,6 +3205,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "write",
         aliases: &["w"],
@@ -3155,6 +3218,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "write!",
         aliases: &["w!"],
@@ -3167,6 +3231,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "write-buffer-close",
         aliases: &["wbc"],
@@ -3179,6 +3244,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "write-buffer-close!",
         aliases: &["wbc!"],
@@ -3202,6 +3268,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "format",
         aliases: &["fmt"],
@@ -3260,6 +3327,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "write-quit",
         aliases: &["wq"],
@@ -3272,6 +3340,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "write-quit!",
         aliases: &["wq!"],
@@ -3284,6 +3353,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "write-all",
         aliases: &["wa"],
@@ -3296,6 +3366,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "write-all!",
         aliases: &["wa!"],
@@ -3308,6 +3379,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "write-quit-all",
         aliases: &["wqa", "xa"],
@@ -3320,6 +3392,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "write-quit-all!",
         aliases: &["wqa!", "xa!"],
@@ -3596,6 +3669,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "reload",
         aliases: &["rl"],
@@ -3607,6 +3681,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "reload-all",
         aliases: &["rla"],
@@ -3618,6 +3693,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "update",
         aliases: &["u"],
@@ -3630,6 +3706,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(feature = "lsp")]
     TypableCommand {
         name: "lsp-workspace-command",
         aliases: &[],
@@ -3642,6 +3719,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(feature = "lsp")]
     TypableCommand {
         name: "lsp-restart",
         aliases: &[],
@@ -3653,6 +3731,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(feature = "lsp")]
     TypableCommand {
         name: "lsp-stop",
         aliases: &[],
@@ -3697,6 +3776,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(feature = "dap")]
     TypableCommand {
         name: "debug-start",
         aliases: &["dbg"],
@@ -3708,6 +3788,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(feature = "dap")]
     TypableCommand {
         name: "debug-remote",
         aliases: &["dbg-tcp"],
@@ -3719,6 +3800,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(feature = "dap")]
     TypableCommand {
         name: "debug-eval",
         aliases: &[],
@@ -3774,6 +3856,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "tutor",
         aliases: &[],
@@ -3901,6 +3984,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "config-open",
         aliases: &[],
@@ -3912,6 +3996,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "config-open-workspace",
         aliases: &[],
@@ -3923,6 +4008,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "log-open",
         aliases: &[],
@@ -3934,6 +4020,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "insert-output",
         aliases: &[],
@@ -3942,6 +4029,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         completer: SHELL_COMPLETER,
         signature: SHELL_SIGNATURE,
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "append-output",
         aliases: &[],
@@ -3950,6 +4038,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         completer: SHELL_COMPLETER,
         signature: SHELL_SIGNATURE,
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "pipe",
         aliases: &["|"],
@@ -3958,6 +4047,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         completer: SHELL_COMPLETER,
         signature: SHELL_SIGNATURE,
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "pipe-to",
         aliases: &[],
@@ -3966,6 +4056,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         completer: SHELL_COMPLETER,
         signature: SHELL_SIGNATURE,
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "run-shell-command",
         aliases: &["sh", "!"],
@@ -4019,6 +4110,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "move",
         aliases: &["mv"],
@@ -4030,6 +4122,7 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
+    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "move!",
         aliases: &["mv!"],
@@ -4571,7 +4664,13 @@ fn trust_workspace(
 
     cx.editor.config_events.0.send(ConfigEvent::Refresh)?;
     // Restart any LSPs that didn't start because trust was missing.
-    lsp_restart(cx, args, event)
+    #[cfg(feature = "lsp")]
+    return lsp_restart(cx, args, event);
+    #[cfg(not(feature = "lsp"))]
+    {
+        let _ = args;
+        Ok(())
+    }
 }
 
 fn untrust_workspace(

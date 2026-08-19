@@ -219,6 +219,7 @@ pub fn syntax_symbol_picker(cx: &mut Context) {
     cx.push_layer(Box::new(overlaid(picker)));
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn syntax_workspace_symbol_picker(cx: &mut Context) {
     #[derive(Debug)]
     struct SearchState {

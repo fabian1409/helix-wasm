@@ -1,0 +1,16 @@
+[package]
+name = "helix-wasm"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "helix_wasm"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+helix-core = { path = "../helix-core" }
+helix-view = { path = "../helix-view", default-features = false }
+helix-term = { path = "../helix-term", default-features = false }
+helix-loader = { path = "../helix-loader" }
+helix-tui = { path = "../helix-tui", default-features = false, features = ["wasm-backend"] }

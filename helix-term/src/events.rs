@@ -2,8 +2,10 @@ use helix_event::{events, register_event};
 use helix_view::document::Mode;
 use helix_view::events::{
     ConfigDidChange, DiagnosticsDidChange, DocumentDidChange, DocumentDidClose, DocumentDidOpen,
-    DocumentFocusLost, LanguageServerExited, LanguageServerInitialized, SelectionDidChange,
+    DocumentFocusLost, SelectionDidChange,
 };
+#[cfg(feature = "lsp")]
+use helix_view::events::{LanguageServerExited, LanguageServerInitialized};
 
 use crate::commands;
 use crate::keymap::MappableCommand;
@@ -24,7 +26,10 @@ pub fn register() {
     register_event::<DocumentFocusLost>();
     register_event::<SelectionDidChange>();
     register_event::<DiagnosticsDidChange>();
-    register_event::<LanguageServerInitialized>();
-    register_event::<LanguageServerExited>();
+    #[cfg(feature = "lsp")]
+    {
+        register_event::<LanguageServerInitialized>();
+        register_event::<LanguageServerExited>();
+    }
     register_event::<ConfigDidChange>();
 }

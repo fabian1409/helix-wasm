@@ -1,9 +1,10 @@
 # Publish the Nix flake outputs to Cachix
 name: Cachix
+# Disabled for this wasm-focused fork - only gh-pages.yml runs automatically. Still
+# available to run manually from the Actions tab, or re-enable by restoring the push
+# trigger below.
 on:
-  push:
-    branches:
-      - master
+  workflow_dispatch:
 
 permissions:
   contents: read

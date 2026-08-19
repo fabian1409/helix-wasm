@@ -1,15 +1,18 @@
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::time::SystemTime;
+use std::collections::HashSet;
+use std::path::PathBuf;
+#[cfg(not(target_arch = "wasm32"))]
 use std::{
-    collections::HashSet,
-    path::{Path, PathBuf},
+    fs,
+    path::Path,
     process::Command,
+    sync::atomic::{AtomicUsize, Ordering},
     sync::mpsc::channel,
+    sync::Arc,
+    time::SystemTime,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use tempfile::TempPath;
 use tree_house::tree_sitter::Grammar;
 
@@ -21,9 +24,6 @@ const DYLIB_EXTENSION: &str = "so";
 
 #[cfg(windows)]
 const DYLIB_EXTENSION: &str = "dll";
-
-#[cfg(target_arch = "wasm32")]
-const DYLIB_EXTENSION: &str = "wasm";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Configuration {
@@ -65,11 +65,6 @@ pub enum GrammarSource {
 const BUILD_TARGET: &str = env!("BUILD_TARGET");
 const REMOTE_NAME: &str = "origin";
 
-#[cfg(target_arch = "wasm32")]
-pub fn get_language(name: &str) -> Result<Option<Grammar>> {
-    unimplemented!()
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 pub fn get_language(name: &str) -> Result<Option<Grammar>> {
     let mut rel_library_path = PathBuf::new().join("grammars").join(name);
@@ -83,6 +78,20 @@ pub fn get_language(name: &str) -> Result<Option<Grammar>> {
     Ok(Some(grammar))
 }
 
+// There's no dlopen on wasm32 (libloading doesn't support it, and there's nothing to
+// fetch/compile grammars from at runtime in a browser anyway), so instead of loading a
+// shared library we statically link a fixed, curated set of grammar crates and hand back
+// their pre-built `Grammar` directly. See `tree-sitter-language` in helix-loader/Cargo.toml.
+#[cfg(target_arch = "wasm32")]
+pub fn get_language(name: &str) -> Result<Option<Grammar>> {
+    let grammar = match name {
+        "rust" => Grammar::try_from(tree_sitter_rust::LANGUAGE)?,
+        _ => return Ok(None),
+    };
+    Ok(Some(grammar))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn ensure_git_is_available() -> Result<()> {
     helix_stdx::env::which("git")?;
     Ok(())
@@ -90,6 +99,7 @@ fn ensure_git_is_available() -> Result<()> {
 
 /// Print a notice if the current workspace has a `.helix/languages.toml` that we *would* have
 /// merged but the workspace-trust gate is keeping us from.
+#[cfg(not(target_arch = "wasm32"))]
 fn warn_if_workspace_languages_skipped(trust: &crate::workspace_trust::WorkspaceTrust) {
     let workspace_languages = crate::workspace_lang_config_file();
     if !workspace_languages.exists() {
@@ -108,6 +118,7 @@ fn warn_if_workspace_languages_skipped(trust: &crate::workspace_trust::Workspace
     );
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn fetch_grammars(strict: bool) -> Result<()> {
     ensure_git_is_available()?;
 
@@ -184,6 +195,7 @@ pub fn fetch_grammars(strict: bool) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn build_grammars(target: Option<String>, strict: bool) -> Result<()> {
     ensure_git_is_available()?;
 
@@ -245,6 +257,7 @@ pub fn build_grammars(target: Option<String>, strict: bool) -> Result<()> {
 // Grammars are configured in the default and user `languages.toml` and are
 // merged. The `grammar_selection` key of the config is then used to filter
 // down all grammars into a subset of the user's choosing.
+#[cfg(not(target_arch = "wasm32"))]
 fn get_grammar_configs() -> Result<Vec<GrammarConfiguration>> {
     // `--grammar fetch/build` clones grammar sources from URLs in `languages.toml` and compiles
     // them into `.so` files helix later loads at runtime. If we let workspace
@@ -274,6 +287,7 @@ fn get_grammar_configs() -> Result<Vec<GrammarConfiguration>> {
     Ok(grammars)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn get_grammar_names() -> Result<Option<HashSet<String>>> {
     // See `get_grammar_configs`, same threat: workspace-local
     // `languages.toml` must not influence the grammar set without
@@ -300,6 +314,7 @@ pub fn get_grammar_names() -> Result<Option<HashSet<String>>> {
     Ok(grammars)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn run_parallel<F, Res>(grammars: Vec<GrammarConfiguration>, job: F) -> Vec<(String, Result<Res>)>
 where
     F: Fn(GrammarConfiguration) -> Result<Res> + Send + 'static + Clone,
@@ -336,6 +351,7 @@ enum GitObjectFormat {
     Sha256,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl GitObjectFormat {
     fn as_str(&self) -> &'static str {
         match self {
@@ -345,6 +361,7 @@ impl GitObjectFormat {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn extract_object_format_from_revision(rev: &str) -> (GitObjectFormat, &str) {
     if let Some(stripped) = rev.strip_prefix("sha1:") {
         return (GitObjectFormat::Sha1, stripped);
@@ -361,10 +378,12 @@ fn extract_object_format_from_revision(rev: &str) -> (GitObjectFormat, &str) {
     (GitObjectFormat::Sha1, rev)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct VendoredGrammar {
     dir: PathBuf,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl VendoredGrammar {
     fn new(grammar: &str) -> Self {
         let dir = crate::runtime_dirs()
@@ -441,6 +460,7 @@ impl VendoredGrammar {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn fetch_grammar(grammar: GrammarConfiguration) -> Result<FetchStatus> {
     let GrammarSource::Git {
         remote, revision, ..
@@ -470,6 +490,7 @@ fn fetch_grammar(grammar: GrammarConfiguration) -> Result<FetchStatus> {
 
 // A wrapper around 'git' commands which returns stdout in success and a
 // helpful error message showing the command, stdout, and stderr in error.
+#[cfg(not(target_arch = "wasm32"))]
 fn git<I, S>(repository_dir: &Path, args: I) -> Result<String>
 where
     I: IntoIterator<Item = S>,
@@ -499,6 +520,7 @@ enum BuildStatus {
     Built,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn build_grammar(grammar: GrammarConfiguration, target: Option<&str>) -> Result<BuildStatus> {
     let grammar_dir = if let GrammarSource::Local { path } = &grammar.source {
         PathBuf::from(&path)
@@ -537,6 +559,7 @@ fn build_grammar(grammar: GrammarConfiguration, target: Option<&str>) -> Result<
     build_tree_sitter_library(&path, grammar, target)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn build_tree_sitter_library(
     src_path: &Path,
     grammar: GrammarConfiguration,
@@ -721,6 +744,7 @@ fn build_tree_sitter_library(
     Ok(BuildStatus::Built)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn needs_recompile(
     lib_path: &Path,
     parser_c_path: &Path,
@@ -741,13 +765,37 @@ fn needs_recompile(
     Ok(false)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn mtime(path: &Path) -> Result<SystemTime> {
     Ok(fs::metadata(path)?.modified()?)
 }
 
 /// Gives the contents of a file from a language's `runtime/queries/<lang>`
 /// directory
+#[cfg(not(target_arch = "wasm32"))]
 pub fn load_runtime_file(language: &str, filename: &str) -> Result<String, std::io::Error> {
     let path = crate::runtime_file(PathBuf::new().join("queries").join(language).join(filename));
     std::fs::read_to_string(path)
+}
+
+// No filesystem to read `runtime/queries/` from in a browser, so query files for the
+// statically-linked grammar set (see `get_language`) are embedded at compile time instead.
+#[cfg(target_arch = "wasm32")]
+pub fn load_runtime_file(language: &str, filename: &str) -> Result<String, std::io::Error> {
+    let contents = match (language, filename) {
+        ("rust", "highlights.scm") => include_str!("../../runtime/queries/rust/highlights.scm"),
+        ("rust", "injections.scm") => include_str!("../../runtime/queries/rust/injections.scm"),
+        ("rust", "locals.scm") => include_str!("../../runtime/queries/rust/locals.scm"),
+        ("rust", "indents.scm") => include_str!("../../runtime/queries/rust/indents.scm"),
+        ("rust", "textobjects.scm") => include_str!("../../runtime/queries/rust/textobjects.scm"),
+        ("rust", "tags.scm") => include_str!("../../runtime/queries/rust/tags.scm"),
+        ("rust", "rainbows.scm") => include_str!("../../runtime/queries/rust/rainbows.scm"),
+        _ => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("no embedded query file for {language}/{filename}"),
+            ))
+        }
+    };
+    Ok(contents.to_string())
 }

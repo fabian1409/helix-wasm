@@ -143,7 +143,7 @@ impl Url {
         };
         let local_host = authority.is_empty() || authority.eq_ignore_ascii_case("localhost");
 
-        #[cfg(not(windows))]
+        #[cfg(unix)]
         {
             use std::ffi::OsStr;
             use std::os::unix::ffi::OsStrExt;
@@ -155,6 +155,19 @@ impl Url {
                 return Err(());
             }
             Ok(PathBuf::from(OsStr::from_bytes(&bytes)))
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            if !local_host {
+                return Err(());
+            }
+            let decoded = percent_decode(path.as_bytes())
+                .decode_utf8()
+                .map_err(|_| ())?;
+            if decoded.is_empty() {
+                return Err(());
+            }
+            Ok(PathBuf::from(decoded.into_owned()))
         }
         #[cfg(windows)]
         {
@@ -180,12 +193,21 @@ impl Url {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
 fn serialize_path(out: &mut String, path: &Path) -> Result<(), ()> {
     use std::os::unix::ffi::OsStrExt;
     // The path is absolute, so it begins with `/`; percent-encode it while
     // preserving the `/` separators (they are excluded from `PATH`).
     out.extend(percent_encode(path.as_os_str().as_bytes(), PATH));
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn serialize_path(out: &mut String, path: &Path) -> Result<(), ()> {
+    // The path is absolute, so it begins with `/`; percent-encode it while
+    // preserving the `/` separators (they are excluded from `PATH`).
+    let s = path.to_str().ok_or(())?;
+    out.extend(percent_encode(s.as_bytes(), PATH));
     Ok(())
 }
 

@@ -22,6 +22,11 @@ pub use self::crossterm::CrosstermBackend;
 mod test;
 pub use self::test::TestBackend;
 
+#[cfg(feature = "wasm-backend")]
+mod wasm;
+#[cfg(feature = "wasm-backend")]
+pub use self::wasm::WasmBackend;
+
 /// Representation of a terminal backend.
 pub trait Backend {
     /// Claims the terminal for TUI use.

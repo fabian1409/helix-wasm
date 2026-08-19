@@ -77,7 +77,11 @@ impl Handler {
         let index = WordIndex::default();
         let (tx, rx) = mpsc::unbounded_channel();
         let mut cancel = TaskController::new();
-        tokio::spawn(index.clone().run(rx, cancel.restart()));
+        // Only spawn if a tokio runtime is actually driving us (e.g. absent in the wasm32 build,
+        // which has no executor) - matches the same guard `AsyncHook::spawn` below already uses.
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::spawn(index.clone().run(rx, cancel.restart()));
+        }
         Self {
             hook: Hook {
                 changes: HashMap::default(),
