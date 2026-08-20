@@ -4,8 +4,7 @@ use std::{
     time::Duration,
 };
 
-use helix_event::AsyncHook;
-use tokio::time::Instant;
+use helix_event::{AsyncHook, Instant};
 
 use crate::{job, ui::overlay::Overlay};
 
@@ -30,11 +29,7 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> AsyncHook
 {
     type Event = Arc<Path>;
 
-    fn handle_event(
-        &mut self,
-        path: Self::Event,
-        timeout: Option<tokio::time::Instant>,
-    ) -> Option<tokio::time::Instant> {
+    fn handle_event(&mut self, path: Self::Event, timeout: Option<Instant>) -> Option<Instant> {
         if self
             .trigger
             .as_ref()
@@ -48,6 +43,13 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> AsyncHook
         }
     }
 
+    // Never actually called on wasm32 - `AsyncHook::spawn`'s debounce loop (`run`, in
+    // helix-event) is native-only, since it needs `tokio::time` - but the trait still
+    // requires this method to exist.
+    #[cfg(target_arch = "wasm32")]
+    fn finish_debounce(&mut self) {}
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn finish_debounce(&mut self) {
         let Some(path) = self.trigger.take() else {
             return;
@@ -162,6 +164,17 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> AsyncHook for DynamicQu
         }
     }
 
+    // Never actually reachable on wasm32 today (no picker there uses `with_dynamic_query`
+    // yet), and the `tokio::spawn` below couldn't run its request anyway - but `handle_event`
+    // above calls this directly (not just from the native-only debounce loop) when a query is
+    // pasted in, so unlike `PreviewHighlightHandler::finish_debounce` this needs to degrade
+    // gracefully rather than assume it's unreachable.
+    #[cfg(target_arch = "wasm32")]
+    fn finish_debounce(&mut self) {
+        self.query.take();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn finish_debounce(&mut self) {
         let Some(query) = self.query.take() else {
             return;

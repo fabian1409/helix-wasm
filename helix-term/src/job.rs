@@ -52,6 +52,14 @@ pub struct Jobs {
     pub wait_futures: FuturesUnordered<JobFuture>,
     pub callbacks: Receiver<Callback>,
     pub status_messages: Receiver<StatusMessage>,
+    /// wasm32 has no tokio runtime to `tokio::spawn` non-waited jobs onto (see `add` below) -
+    /// this drives them instead. `local_spawner` is the handle `add` enqueues onto (needs only
+    /// `&self`); `local_pool` is polled non-blockingly from `Application::wasm_tick` via
+    /// `poll_wasm`, which is the only thing that actually runs them.
+    #[cfg(target_arch = "wasm32")]
+    local_pool: futures_executor::LocalPool,
+    #[cfg(target_arch = "wasm32")]
+    local_spawner: futures_executor::LocalSpawner,
 }
 
 impl Job {
@@ -83,10 +91,16 @@ impl Jobs {
         let (tx, rx) = channel(1024);
         let _ = JOB_QUEUE.set(tx);
         let status_messages = helix_event::status::setup();
+        #[cfg(target_arch = "wasm32")]
+        let local_pool = futures_executor::LocalPool::new();
         Self {
             wait_futures: FuturesUnordered::new(),
             callbacks: rx,
             status_messages,
+            #[cfg(target_arch = "wasm32")]
+            local_spawner: local_pool.spawner(),
+            #[cfg(target_arch = "wasm32")]
+            local_pool,
         }
     }
 
@@ -131,14 +145,33 @@ impl Jobs {
         if j.wait {
             self.wait_futures.push(j.future);
         } else {
-            tokio::spawn(async move {
+            let driver = async move {
                 match j.future.await {
                     Ok(Some(cb)) => dispatch_callback(cb).await,
                     Ok(None) => (),
                     Err(err) => helix_event::status::report(err).await,
                 }
-            });
+            };
+            // wasm32 has no tokio runtime for `tokio::spawn` to schedule onto (it'd panic -
+            // see helix-event/helix-vcs's Cargo.toml) - drive it through the `LocalPool`
+            // instead. `poll_wasm` (called from `Application::wasm_tick`) is what actually
+            // runs it; `spawn_local` here only enqueues it.
+            #[cfg(not(target_arch = "wasm32"))]
+            tokio::spawn(driver);
+            #[cfg(target_arch = "wasm32")]
+            {
+                use futures_util::task::LocalSpawnExt;
+                let _ = self.local_spawner.spawn_local(driver);
+            }
         }
+    }
+
+    /// Polls every job spawned onto the wasm32 local executor (see `add`) once, without
+    /// blocking, and returns. Call regularly (`Application::wasm_tick`) - there's no other
+    /// way for a spawned job to make progress here.
+    #[cfg(target_arch = "wasm32")]
+    pub fn poll_wasm(&mut self) {
+        self.local_pool.run_until_stalled();
     }
 
     /// Blocks until all the jobs that need to be waited on are done.

@@ -1412,7 +1412,7 @@ impl Application {
 
     /// Dispatches a single key event through the same compositor path
     /// `handle_terminal_events` uses for the generic (non-resize, non-CSI) case,
-    /// then synchronously renders if the event changed anything. There's no
+    /// then synchronously renders if the event (or `wasm_tick`) changed anything. There's no
     /// async executor in the wasm build, so `render()` (which never actually
     /// awaits anything — it's only `async` to share code with the native event
     /// loop) is driven to completion with a trivial single-poll executor.
@@ -1426,7 +1426,68 @@ impl Application {
         let should_redraw = self
             .compositor
             .handle_event(&Event::Key(event), &mut cx);
-        if should_redraw && !self.editor.should_close() {
+        let tick_changed = self.wasm_tick();
+        if (should_redraw || tick_changed) && !self.editor.should_close() {
+            futures_executor::block_on(self.render());
+        }
+    }
+
+    /// Replicates, as direct non-blocking calls instead of `tokio::select!` arms, everything
+    /// native's `event_loop` (`jobs.callbacks`/`jobs.status_messages`) and `wait_event`
+    /// (`editor.config_events`, the idle timer) drain - both native-only, since they're built
+    /// on primitives (`tokio::select!`, `Sleep`) that need a real tokio runtime this build
+    /// doesn't have. `jobs.poll_wasm()` is what actually runs anything spawned via
+    /// `cx.jobs.callback(...)`/`cx.jobs.spawn(...)` (see `Jobs::add`'s wasm32 arm in job.rs) -
+    /// nothing else ever polls it. Returns whether anything changed that needs a redraw.
+    /// Called after every key (`handle_key`, above) and from `tick` (driven by a JS-side
+    /// timer via `hx_tick`, independent of key events) so idle-timeout-driven behavior and
+    /// job completions surface even without a keystroke.
+    #[cfg(target_arch = "wasm32")]
+    fn wasm_tick(&mut self) -> bool {
+        let mut changed = false;
+
+        self.jobs.poll_wasm();
+
+        while let Ok(callback) = self.jobs.callbacks.try_recv() {
+            if let Some(job) = self.jobs.handle_callback(
+                &mut self.editor,
+                &mut self.compositor,
+                Ok(Some(callback)),
+            ) {
+                self.jobs.add(job);
+            }
+            changed = true;
+        }
+
+        while let Ok(msg) = self.jobs.status_messages.try_recv() {
+            let severity = match msg.severity {
+                helix_event::status::Severity::Hint => Severity::Hint,
+                helix_event::status::Severity::Info => Severity::Info,
+                helix_event::status::Severity::Warning => Severity::Warning,
+                helix_event::status::Severity::Error => Severity::Error,
+            };
+            self.editor.status_msg = Some((msg.message, severity));
+            changed = true;
+        }
+
+        while let Ok(config_event) = self.editor.config_events.1.try_recv() {
+            self.handle_config_events(config_event);
+            changed = true;
+        }
+
+        if self.editor.check_idle_timer() {
+            futures_executor::block_on(self.handle_idle_timeout());
+            changed = true;
+        }
+
+        changed
+    }
+
+    /// Drives `wasm_tick` independent of key events - called from `hx_tick`, itself driven by
+    /// a JS-side timer (see `helix-wasm/www/index.js`), and redraws if anything changed.
+    #[cfg(target_arch = "wasm32")]
+    pub fn tick(&mut self) {
+        if self.wasm_tick() && !self.editor.should_close() {
             futures_executor::block_on(self.render());
         }
     }

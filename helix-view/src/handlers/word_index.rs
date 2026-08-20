@@ -9,10 +9,10 @@ use foldhash::HashMap;
 use helix_core::{
     chars::char_is_word, diff::compare_ropes, fuzzy::fuzzy_match, ChangeSet, Rope, RopeSlice,
 };
-use helix_event::{register_hook, AsyncHook, TaskController, TaskHandle};
+use helix_event::{register_hook, AsyncHook, Instant, TaskController, TaskHandle};
 use helix_stdx::rope::RopeSliceExt as _;
 use parking_lot::RwLock;
-use tokio::{sync::mpsc, time::Instant};
+use tokio::sync::mpsc;
 
 use crate::{
     events::{ConfigDidChange, DocumentDidChange, DocumentDidClose, DocumentDidOpen},
@@ -78,10 +78,15 @@ impl Handler {
         let (tx, rx) = mpsc::unbounded_channel();
         let mut cancel = TaskController::new();
         // Only spawn if a tokio runtime is actually driving us (e.g. absent in the wasm32 build,
-        // which has no executor) - matches the same guard `AsyncHook::spawn` below already uses.
+        // which has no executor - `tokio::runtime::Handle` itself isn't even available there,
+        // see helix-event/helix-vcs's Cargo.toml) - matches the same guard `AsyncHook::spawn`
+        // below already uses.
+        #[cfg(not(target_arch = "wasm32"))]
         if tokio::runtime::Handle::try_current().is_ok() {
             tokio::spawn(index.clone().run(rx, cancel.restart()));
         }
+        #[cfg(target_arch = "wasm32")]
+        let _ = rx;
         Self {
             hook: Hook {
                 changes: HashMap::default(),
@@ -293,6 +298,11 @@ impl WordIndex {
     /// This task wraps a MPSC queue and spawns blocking tasks which update the index. Updates
     /// are applied one-by-one to ensure that changes to the index are **serialized**:
     /// updates to each document must be applied in-order.
+    ///
+    /// Never actually called on wasm32 (see the `tokio::spawn` guard in `Handler::spawn`
+    /// above) but still compiled, so it's gated the same way rather than left to fail on
+    /// `tokio::task::spawn_blocking` (unavailable there - no threads).
+    #[cfg(not(target_arch = "wasm32"))]
     async fn run(self, mut events: mpsc::UnboundedReceiver<Event>, cancel: TaskHandle) {
         while let Some(event) = events.recv().await {
             if cancel.is_canceled() {

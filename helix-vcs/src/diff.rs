@@ -1,19 +1,29 @@
 use std::iter::Peekable;
 use std::sync::Arc;
+use std::time::Duration;
 
 use helix_core::Rope;
-use helix_event::RenderLockGuard;
+use helix_event::{Instant, RenderLockGuard};
 use imara_diff::Algorithm;
 use parking_lot::{RwLock, RwLockReadGuard};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::task::JoinHandle;
-use tokio::time::Instant;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::diff::worker::DiffWorker;
 
 pub use imara_diff::Hunk;
 
+// The background differ (`DiffWorker`, spawned via `tokio::spawn`) is native-only - wasm32
+// has no working `tokio::spawn` (see helix-event/helix-vcs's Cargo.toml) and no diff
+// providers compiled in anyway (`git` support needs a real filesystem + `git` binary, neither
+// available - see `DiffProviderRegistry`), so `DiffHandle::new` is never actually called
+// there today. Its wasm32 arm below still gives a real, harmless `DiffHandle` (permanently
+// empty diff) rather than an `unimplemented!()` landmine, in case that ever changes.
+#[cfg(not(target_arch = "wasm32"))]
 mod line_cache;
+#[cfg(not(target_arch = "wasm32"))]
 mod worker;
 
 /// A rendering lock passed to the differ the prevents redraws from occurring
@@ -44,10 +54,22 @@ pub struct DiffHandle {
 }
 
 impl DiffHandle {
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn new(diff_base: Rope, doc: Rope) -> DiffHandle {
         DiffHandle::new_with_handle(diff_base, doc).0
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn new(_diff_base: Rope, _doc: Rope) -> DiffHandle {
+        let (channel, _receiver) = unbounded_channel();
+        DiffHandle {
+            channel,
+            diff: Arc::default(),
+            inverted: false,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn new_with_handle(diff_base: Rope, doc: Rope) -> (DiffHandle, JoinHandle<()>) {
         let (sender, receiver) = unbounded_channel();
         let diff: Arc<RwLock<DiffInner>> = Arc::default();
@@ -87,7 +109,7 @@ impl DiffHandle {
         let timeout = if block {
             None
         } else {
-            Some(Instant::now() + tokio::time::Duration::from_millis(SYNC_DIFF_TIMEOUT))
+            Some(Instant::now() + Duration::from_millis(SYNC_DIFF_TIMEOUT))
         };
         self.update_document_impl(doc, self.inverted, Some(RenderLock { lock, timeout }))
     }

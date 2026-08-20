@@ -63,6 +63,7 @@ impl DiffProviderRegistry {
 
     /// Fire-and-forget changed file iteration. Runs everything in a background task. Keeps
     /// iteration until `on_change` returns `false`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn for_each_changed_file(
         self,
         cwd: PathBuf,
@@ -79,6 +80,27 @@ impl DiffProviderRegistry {
                 f(Err(anyhow!("no diff provider returns success")));
             }
         });
+    }
+
+    // No `tokio::task::spawn_blocking` on wasm32 (no threads to run a blocking task on), and
+    // no diff providers compiled in there anyway (see the module doc comment) - report the
+    // same "no provider" result the native version would once none of its providers succeed,
+    // synchronously instead of from a background task.
+    #[cfg(target_arch = "wasm32")]
+    pub fn for_each_changed_file(
+        self,
+        cwd: PathBuf,
+        trust_full: bool,
+        f: impl Fn(Result<FileChange>) -> bool + Send + 'static,
+    ) {
+        if self
+            .providers
+            .iter()
+            .find_map(|provider| provider.for_each_changed_file(&cwd, trust_full, &f).ok())
+            .is_none()
+        {
+            f(Err(anyhow!("no diff provider returns success")));
+        }
     }
 }
 

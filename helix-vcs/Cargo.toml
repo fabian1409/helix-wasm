@@ -13,7 +13,6 @@ homepage.workspace = true
 helix-core = { path = "../helix-core" }
 helix-event = { path = "../helix-event" }
 
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "sync", "parking_lot", "macros"] }
 parking_lot.workspace = true
 arc-swap.workspace = true
 
@@ -22,6 +21,15 @@ imara-diff =  "0.2.0"
 anyhow = "1"
 
 log = "0.4"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "sync", "parking_lot", "macros"] }
+
+# See helix-event/Cargo.toml's equivalent split for why: wasm32-wasip1 can't use `rt`/
+# `rt-multi-thread`/`time` at all (no threads, no reactor), so this is the actually-usable
+# subset - restricting it here turns misuse into a compile error rather than a runtime panic.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1", features = ["sync", "parking_lot", "macros"] }
 
 [features]
 git = ["gix"]

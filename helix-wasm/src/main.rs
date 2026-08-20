@@ -198,6 +198,15 @@ pub extern "C" fn hx_resize(cols: u32, rows: u32) {
     with_app(|app| app.resize(cols as u16, rows as u16));
 }
 
+/// Drives the local job executor, config/status-message queues, and idle timer forward one
+/// step (see `Application::tick`). Call on a JS-side timer, independent of key events - see
+/// `helix-wasm/www/index.js`. Like `hx_key`, doesn't itself update the buffer
+/// `hx_frame_ptr`/`hx_frame_len` expose - call `hx_render` after to pick up any change.
+#[no_mangle]
+pub extern "C" fn hx_tick() {
+    with_app(|app| app.tick());
+}
+
 #[no_mangle]
 pub extern "C" fn hx_key_buf_ptr() -> *mut u8 {
     KEY_BUF.with(|buf| buf.borrow_mut().as_mut_ptr())

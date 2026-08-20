@@ -36,12 +36,17 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
+    time::Duration,
 };
 
-use tokio::{
-    sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-    time::{sleep, Duration, Instant, Sleep},
-};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+#[cfg(not(target_arch = "wasm32"))]
+use tokio::time::{sleep, Sleep};
+// `tokio::time::Instant` needs a working reactor (wasm32 has none - see helix-event's
+// Cargo.toml) even just to exist as an importable item; `helix_event::Instant` is that same
+// type natively and `std::time::Instant` on wasm32, so `idle_timer`/`idle_deadline`'s
+// `Instant::now()`/`+ Duration` arithmetic below works unmodified on both.
+use helix_event::Instant;
 
 use anyhow::{anyhow, bail, Error};
 
@@ -1334,6 +1339,12 @@ pub struct Editor {
     pub idle_timer: Pin<Box<Sleep>>,
     #[cfg(not(target_arch = "wasm32"))]
     redraw_timer: Pin<Box<Sleep>>,
+    // No async executor to drive a real `Sleep`-based timer on wasm32 (nothing polls it) - and
+    // no need for a separate debounced redraw timer either, since wasm32 already redraws
+    // eagerly after every key/tick (see `Application::handle_key`/`wasm_tick`). Just the idle
+    // deadline, checked manually each tick instead of awaited - see `check_idle_timer`.
+    #[cfg(target_arch = "wasm32")]
+    pub idle_deadline: Instant,
     last_motion: Option<Motion>,
     pub last_completion: Option<CompleteAction>,
     pub last_cwd: Option<PathBuf>,
@@ -1481,6 +1492,8 @@ impl Editor {
             idle_timer: Box::pin(sleep(conf.idle_timeout)),
             #[cfg(not(target_arch = "wasm32"))]
             redraw_timer: Box::pin(sleep(Duration::MAX)),
+            #[cfg(target_arch = "wasm32")]
+            idle_deadline: Instant::now() + conf.idle_timeout,
             last_motion: None,
             last_completion: None,
             last_cwd: None,
@@ -1543,8 +1556,6 @@ impl Editor {
         })
     }
 
-    // No async executor drives these timers in the wasm build (see `wait_event`, which is the
-    // only place that ever polls them, and is itself native-only), so resetting them is a no-op.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn clear_idle_timer(&mut self) {
         // equivalent to internal Instant::far_future() (30 years)
@@ -1554,7 +1565,10 @@ impl Editor {
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub fn clear_idle_timer(&mut self) {}
+    pub fn clear_idle_timer(&mut self) {
+        // equivalent to internal Instant::far_future() (30 years)
+        self.idle_deadline = Instant::now() + Duration::from_secs(86400 * 365 * 30);
+    }
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn reset_idle_timer(&mut self) {
@@ -1565,7 +1579,22 @@ impl Editor {
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub fn reset_idle_timer(&mut self) {}
+    pub fn reset_idle_timer(&mut self) {
+        self.idle_deadline = Instant::now() + self.config().idle_timeout;
+    }
+
+    /// Checks whether the idle timeout has elapsed and, if so, clears it (matching
+    /// `clear_idle_timer`) and reports that it fired. There's no async executor to drive a
+    /// real timer on wasm32 (see `idle_deadline`'s field doc) - this is polled manually
+    /// instead, from `Application::wasm_tick`.
+    #[cfg(target_arch = "wasm32")]
+    pub fn check_idle_timer(&mut self) -> bool {
+        if Instant::now() < self.idle_deadline {
+            return false;
+        }
+        self.clear_idle_timer();
+        true
+    }
 
     pub fn clear_status(&mut self) {
         self.status_msg = None;

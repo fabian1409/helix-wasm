@@ -371,6 +371,27 @@ async function main() {
   window.addEventListener("drop", (e) => {
     handleDrop(exports, rootDir, e).then(draw);
   });
+
+  // Drives `hx_tick` (see main.rs) independent of key events - the local job executor,
+  // config-reload etc., and the idle timer otherwise only ever advance when a key happens to
+  // be pressed. Paused while the tab isn't visible so a backgrounded tab doesn't keep ticking.
+  let tickTimer = null;
+  function startTicking() {
+    if (tickTimer !== null) return;
+    tickTimer = setInterval(() => {
+      exports.hx_tick();
+      draw();
+    }, 250);
+  }
+  function stopTicking() {
+    clearInterval(tickTimer);
+    tickTimer = null;
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") startTicking();
+    else stopTicking();
+  });
+  if (document.visibilityState === "visible") startTicking();
 }
 
 main();

@@ -33,7 +33,7 @@
 
 use anyhow::Result;
 pub use cancel::{cancelable_future, TaskController, TaskHandle};
-pub use debounce::{send_blocking, AsyncHook};
+pub use debounce::{send_blocking, AsyncHook, Instant};
 pub use redraw::{
     lock_frame, redraw_requested, request_redraw, start_frame, RenderLockGuard, RequestRedrawOnDrop,
 };

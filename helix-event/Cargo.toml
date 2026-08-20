@@ -14,16 +14,26 @@ homepage.workspace = true
 [dependencies]
 foldhash.workspace = true
 hashbrown = "0.17"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "sync", "parking_lot", "macros"] }
 # the event registry is essentially read only but must be an rwlock so we can
 # setup new events on initialization, hardware-lock-elision hugely benefits this case
-# as it essentially makes the lock entirely free as long as there is no writes 
+# as it essentially makes the lock entirely free as long as there is no writes
 parking_lot = { workspace = true, features = ["hardware-lock-elision"] }
 once_cell = "1.21"
 
 anyhow = "1"
 log = "0.4"
 futures-executor = "0.3.32"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "sync", "parking_lot", "macros"] }
+
+# wasm32-wasip1 can't spawn OS threads or drive a reactor, so `rt`/`rt-multi-thread`/`time`
+# don't work there at all (see helix-wasm's PATCH.md-style notes) - restricting the feature
+# set here (rather than leaving the full one unconditional, which merely compiles without
+# ever working) turns any future wasm32 code path that reaches for `tokio::spawn`/
+# `tokio::time` into a compile error instead of a runtime panic.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1", features = ["sync", "parking_lot", "macros"] }
 
 [features]
 integration_test = []
