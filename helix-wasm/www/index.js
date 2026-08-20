@@ -63,6 +63,8 @@ async function loadHelixWasm() {
       ConsoleStdout.lineBuffered((line) => console.log(line)),
       ConsoleStdout.lineBuffered((line) => console.error(line)),
     ],
+    // The shim's debug logging defaults to *on* if this isn't passed at all.
+    { debug: false },
   );
 
   const { instance } = await WebAssembly.instantiateStreaming(fetch("./helix_wasm.wasm"), {
@@ -76,12 +78,39 @@ async function loadHelixWasm() {
 // Writes `notation`'s UTF-8 bytes into the scratch buffer `hx_key_buf_ptr` exposes (see
 // `KEY_BUF` in helix-wasm/src/main.rs) and calls `hx_key` to consume them. Memory's
 // backing ArrayBuffer must be re-read on every call, since growing wasm memory replaces it.
+// Also flushes any clipboard write (`"+y` etc.) the key event queued, since there's no
+// synchronous browser API for that direction either - see hx_copy_len in main.rs.
 function sendKey(exports, notation) {
   const bytes = new TextEncoder().encode(notation);
   if (bytes.length > exports.hx_key_buf_capacity()) return;
   const ptr = exports.hx_key_buf_ptr();
   new Uint8Array(exports.memory.buffer, ptr, bytes.length).set(bytes);
   exports.hx_key(bytes.length);
+  flushClipboardCopy(exports);
+}
+
+function flushClipboardCopy(exports) {
+  const len = exports.hx_copy_len();
+  if (len === 0) return;
+  const ptr = exports.hx_copy_ptr();
+  const bytes = new Uint8Array(exports.memory.buffer, ptr, len).slice();
+  exports.hx_copy_clear();
+  navigator.clipboard.writeText(new TextDecoder().decode(bytes)).catch((err) => {
+    console.error("helix-wasm: writing to the system clipboard failed:", err);
+  });
+}
+
+// There's no synchronous "read the clipboard" browser API, so `"+p` can only ever paste
+// whatever text a real paste gesture (Ctrl+V/Cmd+V) most recently delivered here - see the
+// comment on helix-view's wasm32 ClipboardProvider for the full reasoning.
+function handlePaste(exports, e) {
+  const text = e.clipboardData?.getData("text/plain");
+  if (!text) return;
+  const bytes = new TextEncoder().encode(text);
+  const ptr = exports.hx_paste_alloc(bytes.length);
+  new Uint8Array(exports.memory.buffer, ptr, bytes.length).set(bytes);
+  exports.hx_paste(bytes.length);
+  e.preventDefault();
 }
 
 async function main() {
@@ -89,6 +118,11 @@ async function main() {
 
   const canvas = document.getElementById("screen");
   const ctx = canvas.getContext("2d");
+  // Browsers only fire `paste`/`copy` reliably on editable elements (inputs, textareas,
+  // contenteditable) - a bare, even focusable, <canvas> doesn't get them in most browsers.
+  // Terminal emulators (xterm.js etc.) work around this with an always-focused, invisible
+  // textarea that receives keyboard/clipboard events instead of the canvas; we do the same.
+  const inputSink = document.getElementById("input-sink");
 
   // Sizes the canvas' backing store to the window at the device's actual pixel
   // density (so text stays crisp on hi-DPI displays) and recomputes how many
@@ -147,6 +181,7 @@ async function main() {
   layoutCanvas();
   exports.hx_init(COLS, ROWS);
   draw();
+  inputSink.focus();
 
   window.addEventListener("resize", () => {
     layoutCanvas();
@@ -154,12 +189,40 @@ async function main() {
     draw();
   });
 
+  // Clicking the canvas should still type into the editor, so redirect focus to the
+  // (invisible) element that actually receives keyboard/clipboard events.
+  canvas.addEventListener("mousedown", () => inputSink.focus());
+
+  // Kept on `window` (not inputSink) so typing keeps working even if focus doesn't land on
+  // inputSink for some reason - keydown bubbles to window regardless of focus target, but
+  // `paste` (below) genuinely needs a focused editable element in most browsers, which is
+  // the only thing inputSink is for.
   window.addEventListener("keydown", (e) => {
+    // Ctrl/Cmd+V isn't bound to anything in Helix's own keymap outside a window-management
+    // submap, so forwarding it as a key event would just hit insert mode's fallback of
+    // inserting the literal "v" character. It exists here purely to trigger the browser's
+    // native paste - so hand focus to inputSink right now (synchronously, so it's actually
+    // focused by the time the OS delivers the paste this same keypress triggers) and leave
+    // the event alone entirely, instead of forwarding or preventing it.
+    // (keyToNotation doesn't read e.metaKey, so this checks the raw event instead.)
+    if (e.key === "v" && (e.ctrlKey || e.metaKey)) {
+      inputSink.focus();
+      return;
+    }
+
     const notation = keyToNotation(e);
     if (notation === null) return;
     sendKey(exports, notation);
     draw();
     e.preventDefault();
+  });
+
+  // Fires on Ctrl+V/Cmd+V while inputSink is focused; doesn't paste into the buffer by
+  // itself, it just primes `"+p"`/`"+P"` with what was pasted (see handlePaste above).
+  // Clear the textarea's own value afterward so it never accumulates stray content.
+  inputSink.addEventListener("paste", (e) => {
+    handlePaste(exports, e);
+    inputSink.value = "";
   });
 }
 

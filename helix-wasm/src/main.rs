@@ -26,6 +26,13 @@ thread_local! {
     static CURSOR: RefCell<(i32, i32)> = RefCell::new((-1, -1));
     static CURSOR_KIND: RefCell<CursorKind> = RefCell::new(CursorKind::Hidden);
     static KEY_BUF: RefCell<[u8; KEY_BUF_CAPACITY]> = RefCell::new([0; KEY_BUF_CAPACITY]);
+    // Clipboard writes (`"+y` etc.) queued by `helix_view::clipboard` during `hx_key`, for
+    // the JS host to hand to `navigator.clipboard.writeText` afterwards.
+    static COPY_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::new());
+    // Scratch buffer the JS host writes clipboard text into (on a browser `paste` event)
+    // before calling `hx_paste`; unlike KEY_BUF this is unbounded since pasted text has no
+    // fixed max length, so it's grown to fit via `hx_paste_alloc` instead of a fixed array.
+    static PASTE_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::new());
 }
 
 fn cursor_kind_id(kind: CursorKind) -> c_int {
@@ -181,6 +188,55 @@ pub extern "C" fn hx_key(len: u32) {
         return;
     };
     with_app(|app| app.handle_key(event));
+
+    if let Some(text) = helix_view::clipboard::take_pending_copy() {
+        COPY_BUF.with(|buf| *buf.borrow_mut() = text.into_bytes());
+    }
+}
+
+/// Non-zero if a clipboard write (e.g. `"+y`) happened during the last `hx_key` call and
+/// is waiting to be handed to `navigator.clipboard.writeText`; read it via
+/// `hx_copy_ptr`/`hx_copy_len`, then call `hx_copy_clear`.
+#[no_mangle]
+pub extern "C" fn hx_copy_len() -> usize {
+    COPY_BUF.with(|buf| buf.borrow().len())
+}
+
+#[no_mangle]
+pub extern "C" fn hx_copy_ptr() -> *const u8 {
+    COPY_BUF.with(|buf| buf.borrow().as_ptr())
+}
+
+#[no_mangle]
+pub extern "C" fn hx_copy_clear() {
+    COPY_BUF.with(|buf| buf.borrow_mut().clear());
+}
+
+/// Grows the scratch buffer read by `hx_paste` to `len` bytes and returns a pointer for the
+/// caller to write UTF-8 clipboard text into (e.g. from a browser `paste` event's
+/// `clipboardData`) before calling `hx_paste(len)`.
+#[no_mangle]
+pub extern "C" fn hx_paste_alloc(len: u32) -> *mut u8 {
+    PASTE_BUF.with(|buf| {
+        let mut buf = buf.borrow_mut();
+        buf.clear();
+        buf.resize(len as usize, 0);
+        buf.as_mut_ptr()
+    })
+}
+
+/// Reads `len` UTF-8 bytes from the buffer at `hx_paste_alloc`'s pointer and makes them the
+/// contents `"+p`/`"+P` (and other system-clipboard reads) will paste until the next call.
+#[no_mangle]
+pub extern "C" fn hx_paste(len: u32) {
+    let text = PASTE_BUF.with(|buf| {
+        let buf = buf.borrow();
+        let len = (len as usize).min(buf.len());
+        std::str::from_utf8(&buf[..len]).map(str::to_owned)
+    });
+    if let Ok(text) = text {
+        helix_view::clipboard::set_pasted_text(text);
+    }
 }
 
 /// Renders a frame and packs it into the buffer read by `hx_frame_ptr`/`hx_frame_len`: 12 bytes

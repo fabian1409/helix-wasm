@@ -34,35 +34,62 @@ type Result<T> = std::result::Result<T, ClipboardError>;
 #[cfg(not(target_arch = "wasm32"))]
 pub use external::ClipboardProvider;
 #[cfg(target_arch = "wasm32")]
-pub use noop::ClipboardProvider;
+pub use browser::{set_pasted_text, take_pending_copy, ClipboardProvider};
 
-// Clipboard not supported for wasm
+// There's no synchronous "read the system clipboard" browser API (the async
+// `navigator.clipboard` API is permission-gated and can't be awaited from these
+// synchronous methods, since the wasm build has no async executor to drive it - see
+// helix-wasm/src/main.rs). Instead: the JS host listens for the browser's native `paste`
+// event (Ctrl+V/Cmd+V), which hands over clipboard text synchronously via
+// `event.clipboardData`, and forwards it here via `set_pasted_text` - so `"+p` pastes
+// whatever was most recently delivered by an actual paste gesture. Writes go the other
+// way: `set_contents` stashes the text for helix-wasm's FFI layer to hand to
+// `navigator.clipboard.writeText` after the triggering key event returns.
 #[cfg(target_arch = "wasm32")]
-mod noop {
+mod browser {
     use super::*;
+    use std::cell::RefCell;
+
+    thread_local! {
+        static PASTED: RefCell<String> = RefCell::new(String::new());
+        static PENDING_COPY: RefCell<Option<String>> = RefCell::new(None);
+    }
 
     #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
     pub enum ClipboardProvider {
         #[default]
-        None,
+        Browser,
     }
 
     impl ClipboardProvider {
         pub fn detect() -> Self {
-            Self::None
+            Self::Browser
         }
 
         pub fn name(&self) -> Cow<'_, str> {
-            "none".into()
+            "browser".into()
         }
 
         pub fn get_contents(&self, _clipboard_type: &ClipboardType) -> Result<String> {
-            Err(ClipboardError::ReadingNotSupported)
+            Ok(PASTED.with(|p| p.borrow().clone()))
         }
 
-        pub fn set_contents(&self, _content: &str, _clipboard_type: ClipboardType) -> Result<()> {
+        pub fn set_contents(&self, content: &str, _clipboard_type: ClipboardType) -> Result<()> {
+            PENDING_COPY.with(|p| *p.borrow_mut() = Some(content.to_owned()));
             Ok(())
         }
+    }
+
+    /// Called by helix-wasm's `hx_paste` export when the JS host's `paste` event handler
+    /// delivers clipboard text.
+    pub fn set_pasted_text(text: String) {
+        PASTED.with(|p| *p.borrow_mut() = text);
+    }
+
+    /// Called by helix-wasm's `hx_key` export after handling a key event, to pick up any
+    /// clipboard write `set_contents` queued during it.
+    pub fn take_pending_copy() -> Option<String> {
+        PENDING_COPY.with(|p| p.borrow_mut().take())
     }
 }
 
