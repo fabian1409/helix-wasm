@@ -2,7 +2,29 @@ import WASI from "./vendor/browser_wasi_shim/wasi.js";
 import { Fd } from "./vendor/browser_wasi_shim/fd.js";
 import { ConsoleStdout, Directory, File, PreopenDirectory } from "./vendor/browser_wasi_shim/fs_mem.js";
 
-const CELL_W = 8, CELL_H = 16;
+// Linked in index.html via Google Fonts; falls back to the platform default monospace font
+// if that's blocked (offline, ad blocker, etc.) - see the `document.fonts.load` call in
+// main() below.
+const FONT_FAMILY = '"Fira Code", monospace';
+const FONT_SIZE = 16;
+// Canvas has no line-height concept - drawing at 1 row per FONT_SIZE px (i.e. treating the
+// font size as the line height too, which is what a plain `ctx.font = "16px …"` gives you)
+// packs rows as tightly as the font's own em-box, with none of the extra leading a real
+// terminal adds on top of its font's natural metrics. 1.2x is the common terminal-emulator
+// default for that extra breathing room.
+const LINE_HEIGHT = 1.2;
+const CELL_H = Math.round(FONT_SIZE * LINE_HEIGHT);
+// Not a fixed cell width like CELL_H - Fira Code's actual glyph advance width at FONT_SIZE
+// isn't necessarily an integer, or 8px, so this is measured once in main() before the first
+// layout/draw instead of hardcoded, and every cell position derives from it.
+let CELL_W = 8;
+// Canvas has no line-height concept for a single `fillText` call either -
+// `textBaseline: "top"` pins a glyph to the font's ascent metric, not to CELL_H, and a
+// font's ascent+descent commonly exceeds its own em size (Fira Code's does) even before
+// LINE_HEIGHT is added on top - so glyphs drawn that way clip against the row above. This is
+// the alphabetic-baseline y offset (from a cell's top edge) that centers a glyph in CELL_H
+// instead, using real font metrics - also measured once in main(), see there.
+let TEXT_BASELINE_Y = CELL_H * 0.8;
 let COLS = 0, ROWS = 0;
 
 const NAMED_KEYS = {
@@ -217,6 +239,31 @@ async function main() {
   // textarea that receives keyboard/clipboard events instead of the canvas; we do the same.
   const inputSink = document.getElementById("input-sink");
 
+  // Canvas text doesn't trigger webfont loading the way CSS does (nothing here ever sets
+  // `font-family: "Fira Code"` in a stylesheet rule), so without this the very first frame -
+  // and the cell-width measurement below - would silently render with the fallback font
+  // instead. Swallow failures (offline, blocked, etc.) and fall through to that same
+  // fallback, already in FONT_FAMILY's stack.
+  try {
+    await document.fonts.load(`${FONT_SIZE}px ${FONT_FAMILY}`);
+  } catch {
+    // ignored
+  }
+  ctx.font = `${FONT_SIZE}px ${FONT_FAMILY}`;
+  // Fira Code's advance width at this size isn't necessarily an integer, or the 8px this
+  // grid used to hardcode - measure it once instead of guessing, so cells and glyphs always
+  // agree regardless of font/size.
+  const metrics = ctx.measureText("0");
+  CELL_W = Math.max(1, Math.round(metrics.width));
+  // `fontBoundingBoxAscent`/`Descent` reflect the font's real vertical metrics (unlike
+  // `actualBoundingBox*`, which vary per glyph); fall back to a fixed ratio on the rare
+  // engine that lacks them.
+  if (metrics.fontBoundingBoxAscent !== undefined) {
+    const ascent = metrics.fontBoundingBoxAscent;
+    const descent = metrics.fontBoundingBoxDescent;
+    TEXT_BASELINE_Y = ascent + (CELL_H - (ascent + descent)) / 2;
+  }
+
   // Sizes the canvas' backing store to the window at the device's actual pixel
   // density (so text stays crisp on hi-DPI displays) and recomputes how many
   // cells fit; draw() re-reads COLS/ROWS on every call, so it just works.
@@ -231,8 +278,8 @@ async function main() {
     canvas.style.height = `${ROWS * CELL_H}px`;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.font = `${CELL_H}px monospace`;
-    ctx.textBaseline = "top";
+    ctx.font = `${FONT_SIZE}px ${FONT_FAMILY}`;
+    ctx.textBaseline = "alphabetic";
   }
 
   function draw() {
@@ -253,7 +300,7 @@ async function main() {
       ctx.fillRect(x, y, CELL_W, CELL_H);
       if (ch !== 0 && ch !== 32) {
         ctx.fillStyle = rgb(fg);
-        ctx.fillText(String.fromCodePoint(ch), x, y);
+        ctx.fillText(String.fromCodePoint(ch), x, y + TEXT_BASELINE_Y);
       }
     }
 
