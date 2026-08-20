@@ -25,6 +25,10 @@ let CELL_W = 8;
 // the alphabetic-baseline y offset (from a cell's top edge) that centers a glyph in CELL_H
 // instead, using real font metrics - also measured once in main(), see there.
 let TEXT_BASELINE_Y = CELL_H * 0.8;
+// A little breathing room above the first row, purely cosmetic (flush-to-the-top-edge text
+// looked cramped) - filled with the theme's background the same way the leftover margin at
+// the right/bottom edge is, see draw()'s margin fill.
+const PADDING_TOP = 8;
 let COLS = 0, ROWS = 0;
 
 const NAMED_KEYS = {
@@ -264,18 +268,20 @@ async function main() {
     TEXT_BASELINE_Y = ascent + (CELL_H - (ascent + descent)) / 2;
   }
 
-  // Sizes the canvas' backing store to the window at the device's actual pixel
-  // density (so text stays crisp on hi-DPI displays) and recomputes how many
-  // cells fit; draw() re-reads COLS/ROWS on every call, so it just works.
+  // Sizes the canvas' backing store to the *window*, not just an exact multiple of the cell
+  // grid (so text stays crisp on hi-DPI displays, and there's no gap between the canvas and
+  // the window edge for the page's own background to show through - see `draw`'s margin fill
+  // below for the rest of that fix) and recomputes how many full cells fit; draw() re-reads
+  // COLS/ROWS on every call, so it just works.
   function layoutCanvas() {
     const dpr = window.devicePixelRatio || 1;
     COLS = Math.max(1, Math.floor(window.innerWidth / CELL_W));
-    ROWS = Math.max(1, Math.floor(window.innerHeight / CELL_H));
+    ROWS = Math.max(1, Math.floor((window.innerHeight - PADDING_TOP) / CELL_H));
 
-    canvas.width = COLS * CELL_W * dpr;
-    canvas.height = ROWS * CELL_H * dpr;
-    canvas.style.width = `${COLS * CELL_W}px`;
-    canvas.style.height = `${ROWS * CELL_H}px`;
+    canvas.width = window.innerWidth * dpr;
+    canvas.height = window.innerHeight * dpr;
+    canvas.style.width = `${window.innerWidth}px`;
+    canvas.style.height = `${window.innerHeight}px`;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.font = `${FONT_SIZE}px ${FONT_FAMILY}`;
@@ -289,13 +295,21 @@ async function main() {
     const cells = new Uint32Array(exports.memory.buffer, ptr, len / 4);
     const cellCount = cells.length / 3;
 
-    ctx.clearRect(0, 0, COLS * CELL_W, ROWS * CELL_H);
+    // COLS*CELL_W/ROWS*CELL_H (the actual cell grid) is usually smaller than the canvas
+    // (the full window, see layoutCanvas) by up to one cell's worth of leftover space at the
+    // right/bottom edge. Paint that margin with the last cell's background (plain buffer
+    // background, not gutter/cursor-line) instead of leaving it transparent, so it blends
+    // with the theme instead of showing the page's own background through a seam.
+    if (cellCount > 0) {
+      ctx.fillStyle = rgb(cells[(cellCount - 1) * 3 + 2]);
+      ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+    }
     for (let i = 0; i < cellCount; i++) {
       const ch = cells[i * 3];
       const fg = cells[i * 3 + 1];
       const bg = cells[i * 3 + 2];
       const x = (i % COLS) * CELL_W;
-      const y = Math.floor(i / COLS) * CELL_H;
+      const y = Math.floor(i / COLS) * CELL_H + PADDING_TOP;
       ctx.fillStyle = rgb(bg);
       ctx.fillRect(x, y, CELL_W, CELL_H);
       if (ch !== 0 && ch !== 32) {
@@ -310,7 +324,7 @@ async function main() {
     // 0 = block, 1 = bar, 2 = underline, 3 = hidden (see hx_cursor_kind in main.rs).
     if (col >= 0 && row >= 0 && kind !== 3) {
       const x = col * CELL_W;
-      const y = row * CELL_H;
+      const y = row * CELL_H + PADDING_TOP;
       ctx.fillStyle = "rgba(255,255,255,0.6)";
       if (kind === 0) ctx.fillRect(x, y, CELL_W, CELL_H);
       else if (kind === 2) ctx.fillRect(x, y + CELL_H - 2, CELL_W, 2);
