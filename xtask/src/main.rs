@@ -596,7 +596,8 @@ pub mod tasks {
             "helix-wasm",
             "--target",
             "wasm32-wasip1",
-            "--release",
+            "--profile",
+            "wasm",
         ]);
 
         let wasi_sdk = crate::path::wasi_sdk();
@@ -628,7 +629,7 @@ pub mod tasks {
         let root = crate::path::project_root();
         let www = root.join("helix-wasm/www");
         std::fs::copy(
-            root.join("target/wasm32-wasip1/release/helix_wasm.wasm"),
+            root.join("target/wasm32-wasip1/wasm/helix_wasm.wasm"),
             www.join("helix_wasm.wasm"),
         )?;
         std::fs::copy(root.join("logo.svg"), www.join("logo.svg"))?;
@@ -660,9 +661,10 @@ Usage: Run with `cargo xtask <task>`, eg. `cargo xtask docgen`.
         theme-check [themes]       Check that the theme files in runtime/themes/ are valid for the
                                    given themes, or all themes if none are specified.
         wasi-sdk-install           Download and extract the pinned wasi-sdk release into wasi-sdk/.
-        wasm                       Build helix-wasm for wasm32-wasip1 (using wasi-sdk/ automatically,
-                                   falling back to PATH if wasi-sdk/ isn't installed) and drop the
-                                   binary into helix-wasm/www/, which is then servable as-is.
+        wasm                       Build helix-wasm for wasm32-wasip1 with the size-optimized `wasm`
+                                   profile (using wasi-sdk/ automatically, falling back to PATH if
+                                   wasi-sdk/ isn't installed) and drop the binary into helix-wasm/www/,
+                                   which is then servable as-is.
 "
         );
     }

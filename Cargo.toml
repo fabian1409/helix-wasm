@@ -32,6 +32,16 @@ codegen-units = 1
 strip = true
 opt-level = 3
 
+# Used by `cargo xtask wasm`. Every byte here is shipped over the network to a browser, so
+# unlike `opt` this optimizes for size (`z`) rather than speed, on top of the same
+# strip/fat-LTO/single-codegen-unit set that already shrinks `opt`.
+[profile.wasm]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+strip = true
+opt-level = "z"
+
 [profile.integration]
 inherits = "test"
 package.helix-core.opt-level = 2
