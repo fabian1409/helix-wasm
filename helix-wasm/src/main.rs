@@ -148,9 +148,16 @@ fn indexed_rgb(i: u8) -> (u8, u8, u8) {
     }
 }
 
-fn color_to_rgb(color: Color) -> (u8, u8, u8) {
+/// `Color::Reset` is what an unstyled cell's fg/bg actually is (e.g. widget borders drawn
+/// with `Style::default()`, which never assigns one) - on a real terminal that means "inherit
+/// whatever the terminal emulator's own default colors are", which for most setups reads as a
+/// light foreground on a dark background. There's no equivalent "ambient default" here, so
+/// `default` (the theme's own `ui.text`/`ui.background` colors, see `hx_render`) stands in for
+/// it instead - hardcoding black here reads as broken/invisible borders and text on every dark
+/// theme (which is most of them), not just a stylistic mismatch.
+fn color_to_rgb(color: Color, default: (u8, u8, u8)) -> (u8, u8, u8) {
     match color {
-        Color::Reset => (0, 0, 0),
+        Color::Reset => default,
         Color::Black => (0, 0, 0),
         Color::Red => (205, 0, 0),
         Color::Green => (0, 205, 0),
@@ -326,13 +333,32 @@ pub extern "C" fn hx_paste(len: u32) {
 #[no_mangle]
 pub extern "C" fn hx_render() {
     with_app(|app| {
+        // Resolved once per frame rather than per cell - see `color_to_rgb`'s doc comment for
+        // why `Color::Reset` needs a default at all. The (220, 220, 220)/(0, 0, 0) fallbacks
+        // only matter if a theme somehow leaves `ui.text`/`ui.background` completely unset,
+        // which no real theme does.
+        let theme = &app.editor.theme;
+        let default_fg = theme
+            .get("ui.text")
+            .fg
+            .map(|c| color_to_rgb(c, (220, 220, 220)))
+            .unwrap_or((220, 220, 220));
+        let default_bg = theme
+            .get("ui.background")
+            .bg
+            .map(|c| color_to_rgb(c, (0, 0, 0)))
+            .unwrap_or((0, 0, 0));
+
         let backend = app.render_frame();
         let buffer = backend.buffer();
 
         let mut packed = Vec::with_capacity(buffer.content.len() * 12);
         for cell in &buffer.content {
             let ch = cell.symbol.chars().next().unwrap_or(' ') as u32;
-            let (fg, bg) = (color_to_rgb(cell.fg), color_to_rgb(cell.bg));
+            let (fg, bg) = (
+                color_to_rgb(cell.fg, default_fg),
+                color_to_rgb(cell.bg, default_bg),
+            );
             // The block cursor (and other reverse-video styles) is baked into the buffer as a
             // `reversed` modifier rather than explicit colors, since that's how a real terminal
             // renders it; we have no terminal to do that for us, so swap the colors ourselves.
