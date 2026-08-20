@@ -1,8 +1,30 @@
 import WASI from "./vendor/browser_wasi_shim/wasi.js";
 import { Fd } from "./vendor/browser_wasi_shim/fd.js";
-import { ConsoleStdout } from "./vendor/browser_wasi_shim/fs_mem.js";
+import { ConsoleStdout, Directory, File, PreopenDirectory } from "./vendor/browser_wasi_shim/fs_mem.js";
 
-const CELL_W = 8, CELL_H = 16;
+// Linked in index.html via Google Fonts; falls back to the platform default monospace font
+// if that's blocked (offline, ad blocker, etc.) - see the `document.fonts.load` call in
+// main() below.
+const FONT_FAMILY = '"Fira Code", monospace';
+const FONT_SIZE = 16;
+// Canvas has no line-height concept - drawing at 1 row per FONT_SIZE px (i.e. treating the
+// font size as the line height too, which is what a plain `ctx.font = "16px …"` gives you)
+// packs rows as tightly as the font's own em-box, with none of the extra leading a real
+// terminal adds on top of its font's natural metrics. 1.2x is the common terminal-emulator
+// default for that extra breathing room.
+const LINE_HEIGHT = 1.2;
+const CELL_H = Math.round(FONT_SIZE * LINE_HEIGHT);
+// Not a fixed cell width like CELL_H - Fira Code's actual glyph advance width at FONT_SIZE
+// isn't necessarily an integer, or 8px, so this is measured once in main() before the first
+// layout/draw instead of hardcoded, and every cell position derives from it.
+let CELL_W = 8;
+// Canvas has no line-height concept for a single `fillText` call either -
+// `textBaseline: "top"` pins a glyph to the font's ascent metric, not to CELL_H, and a
+// font's ascent+descent commonly exceeds its own em size (Fira Code's does) even before
+// LINE_HEIGHT is added on top - so glyphs drawn that way clip against the row above. This is
+// the alphabetic-baseline y offset (from a cell's top edge) that centers a glyph in CELL_H
+// instead, using real font metrics - also measured once in main(), see there.
+let TEXT_BASELINE_Y = CELL_H * 0.8;
 let COLS = 0, ROWS = 0;
 
 const NAMED_KEYS = {
@@ -51,7 +73,17 @@ function rgb(packed) {
 // our no-op `main`, then exits) against a minimal WASI host, and returns its `exports` -
 // still fully callable afterward, since "exiting" only unwinds the `_start` call, not the
 // wasm instance itself.
+//
+// One preopened directory at `/` gives the guest a real (session-only, in-memory)
+// filesystem: config.toml/languages.toml overrides (see `helix_loader::config_dir()` etc.
+// and `build_application` in helix-wasm/src/main.rs) live at the root right alongside
+// whatever files the user drops in (see `handleDrop` below) - there's no separate
+// config/cache/data/workspace split. Nothing here persists across a reload. `rootDir` is
+// kept around so JS can seed `File` objects directly (bypassing WASI syscalls) for
+// drag-and-drop.
 async function loadHelixWasm() {
+  const rootDir = new Directory(new Map());
+
   const wasi = new WASI(
     [],
     // `HOME` is only used to build paths (config/cache dirs); nothing here touches a real
@@ -62,7 +94,10 @@ async function loadHelixWasm() {
       new Fd(), // stdin: unused, default Fd methods (ERRNO_NOTSUP) are fine.
       ConsoleStdout.lineBuffered((line) => console.log(line)),
       ConsoleStdout.lineBuffered((line) => console.error(line)),
+      new PreopenDirectory("/", rootDir.contents),
     ],
+    // The shim's debug logging defaults to *on* if this isn't passed at all.
+    { debug: false },
   );
 
   const { instance } = await WebAssembly.instantiateStreaming(fetch("./helix_wasm.wasm"), {
@@ -70,25 +105,164 @@ async function loadHelixWasm() {
   });
 
   wasi.start(instance);
-  return instance.exports;
+  return { exports: instance.exports, rootDir };
 }
 
 // Writes `notation`'s UTF-8 bytes into the scratch buffer `hx_key_buf_ptr` exposes (see
 // `KEY_BUF` in helix-wasm/src/main.rs) and calls `hx_key` to consume them. Memory's
 // backing ArrayBuffer must be re-read on every call, since growing wasm memory replaces it.
+// Also flushes any clipboard write (`"+y` etc.) the key event queued, since there's no
+// synchronous browser API for that direction either - see hx_copy_len in main.rs.
 function sendKey(exports, notation) {
   const bytes = new TextEncoder().encode(notation);
   if (bytes.length > exports.hx_key_buf_capacity()) return;
   const ptr = exports.hx_key_buf_ptr();
   new Uint8Array(exports.memory.buffer, ptr, bytes.length).set(bytes);
   exports.hx_key(bytes.length);
+  flushClipboardCopy(exports);
+}
+
+function flushClipboardCopy(exports) {
+  const len = exports.hx_copy_len();
+  if (len === 0) return;
+  const ptr = exports.hx_copy_ptr();
+  const bytes = new Uint8Array(exports.memory.buffer, ptr, len).slice();
+  exports.hx_copy_clear();
+  navigator.clipboard.writeText(new TextDecoder().decode(bytes)).catch((err) => {
+    console.error("helix-wasm: writing to the system clipboard failed:", err);
+  });
+}
+
+// There's no synchronous "read the clipboard" browser API, so `"+p` can only ever paste
+// whatever text a real paste gesture (Ctrl+V/Cmd+V) most recently delivered here - see the
+// comment on helix-view's wasm32 ClipboardProvider for the full reasoning.
+function handlePaste(exports, e) {
+  const text = e.clipboardData?.getData("text/plain");
+  if (!text) return;
+  const bytes = new TextEncoder().encode(text);
+  const ptr = exports.hx_paste_alloc(bytes.length);
+  new Uint8Array(exports.memory.buffer, ptr, bytes.length).set(bytes);
+  exports.hx_paste(bytes.length);
+  e.preventDefault();
+}
+
+// Writes `path`'s UTF-8 bytes into the scratch buffer `hx_open_path_alloc` grows to fit and
+// calls `hx_open_path` to open it in the current view. `path` must already exist in the
+// virtual filesystem (see `insertFile`) - this is what `handleDrop` calls after seeding a file.
+function openPath(exports, path) {
+  const bytes = new TextEncoder().encode(path);
+  const ptr = exports.hx_open_path_alloc(bytes.length);
+  new Uint8Array(exports.memory.buffer, ptr, bytes.length).set(bytes);
+  exports.hx_open_path(bytes.length);
+}
+
+// Inserts `bytes` at `relPath` (e.g. "src/main.rs") under `rootDir`, creating any
+// intermediate directories, and returns the absolute WASI path.
+function insertFile(rootDir, relPath, bytes) {
+  const parts = relPath.split("/").filter(Boolean);
+  let dir = rootDir;
+  for (let i = 0; i < parts.length - 1; i++) {
+    let next = dir.contents.get(parts[i]);
+    if (!(next instanceof Directory)) {
+      next = new Directory(new Map());
+      dir.contents.set(parts[i], next);
+    }
+    dir = next;
+  }
+  dir.contents.set(parts[parts.length - 1], new File(bytes));
+  return "/" + parts.join("/");
+}
+
+// Recursively reads a dropped `FileSystemEntry` (a plain file, or a directory - from
+// dragging a whole folder in, Chromium/Firefox only) into a flat list of
+// [relative path, bytes] pairs `handleDrop` can hand to `insertFile`.
+function readEntry(entry, prefix) {
+  return new Promise((resolve) => {
+    if (entry.isFile) {
+      entry.file((file) => {
+        file.arrayBuffer().then((buf) => resolve([[prefix + entry.name, new Uint8Array(buf)]]));
+      });
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const children = [];
+      const readBatch = () => {
+        reader.readEntries((batch) => {
+          if (batch.length === 0) {
+            Promise.all(children.map((child) => readEntry(child, prefix + entry.name + "/"))).then(
+              (lists) => resolve(lists.flat()),
+            );
+            return;
+          }
+          children.push(...batch);
+          readBatch();
+        });
+      };
+      readBatch();
+    } else {
+      resolve([]);
+    }
+  });
+}
+
+// Seeds every file dropped onto the page into the virtual filesystem's root and opens each
+// in the current view (replacing whatever's focused there - dropping more than one file at
+// once just leaves the last one open).
+async function handleDrop(exports, rootDir, e) {
+  e.preventDefault();
+
+  const items = Array.from(e.dataTransfer.items || []);
+  const entries = items.map((item) => item.webkitGetAsEntry?.()).filter(Boolean);
+
+  let files;
+  if (entries.length > 0) {
+    files = (await Promise.all(entries.map((entry) => readEntry(entry, "")))).flat();
+  } else {
+    // Fallback for browsers without `webkitGetAsEntry` - flat files only, no folder drop.
+    files = await Promise.all(
+      Array.from(e.dataTransfer.files).map(async (f) => [f.name, new Uint8Array(await f.arrayBuffer())]),
+    );
+  }
+
+  for (const [relPath, bytes] of files) {
+    openPath(exports, insertFile(rootDir, relPath, bytes));
+  }
 }
 
 async function main() {
-  const exports = await loadHelixWasm();
+  const { exports, rootDir } = await loadHelixWasm();
 
   const canvas = document.getElementById("screen");
   const ctx = canvas.getContext("2d");
+  // Browsers only fire `paste`/`copy` reliably on editable elements (inputs, textareas,
+  // contenteditable) - a bare, even focusable, <canvas> doesn't get them in most browsers.
+  // Terminal emulators (xterm.js etc.) work around this with an always-focused, invisible
+  // textarea that receives keyboard/clipboard events instead of the canvas; we do the same.
+  const inputSink = document.getElementById("input-sink");
+
+  // Canvas text doesn't trigger webfont loading the way CSS does (nothing here ever sets
+  // `font-family: "Fira Code"` in a stylesheet rule), so without this the very first frame -
+  // and the cell-width measurement below - would silently render with the fallback font
+  // instead. Swallow failures (offline, blocked, etc.) and fall through to that same
+  // fallback, already in FONT_FAMILY's stack.
+  try {
+    await document.fonts.load(`${FONT_SIZE}px ${FONT_FAMILY}`);
+  } catch {
+    // ignored
+  }
+  ctx.font = `${FONT_SIZE}px ${FONT_FAMILY}`;
+  // Fira Code's advance width at this size isn't necessarily an integer, or the 8px this
+  // grid used to hardcode - measure it once instead of guessing, so cells and glyphs always
+  // agree regardless of font/size.
+  const metrics = ctx.measureText("0");
+  CELL_W = Math.max(1, Math.round(metrics.width));
+  // `fontBoundingBoxAscent`/`Descent` reflect the font's real vertical metrics (unlike
+  // `actualBoundingBox*`, which vary per glyph); fall back to a fixed ratio on the rare
+  // engine that lacks them.
+  if (metrics.fontBoundingBoxAscent !== undefined) {
+    const ascent = metrics.fontBoundingBoxAscent;
+    const descent = metrics.fontBoundingBoxDescent;
+    TEXT_BASELINE_Y = ascent + (CELL_H - (ascent + descent)) / 2;
+  }
 
   // Sizes the canvas' backing store to the window at the device's actual pixel
   // density (so text stays crisp on hi-DPI displays) and recomputes how many
@@ -104,8 +278,8 @@ async function main() {
     canvas.style.height = `${ROWS * CELL_H}px`;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.font = `${CELL_H}px monospace`;
-    ctx.textBaseline = "top";
+    ctx.font = `${FONT_SIZE}px ${FONT_FAMILY}`;
+    ctx.textBaseline = "alphabetic";
   }
 
   function draw() {
@@ -126,7 +300,7 @@ async function main() {
       ctx.fillRect(x, y, CELL_W, CELL_H);
       if (ch !== 0 && ch !== 32) {
         ctx.fillStyle = rgb(fg);
-        ctx.fillText(String.fromCodePoint(ch), x, y);
+        ctx.fillText(String.fromCodePoint(ch), x, y + TEXT_BASELINE_Y);
       }
     }
 
@@ -147,6 +321,7 @@ async function main() {
   layoutCanvas();
   exports.hx_init(COLS, ROWS);
   draw();
+  inputSink.focus();
 
   window.addEventListener("resize", () => {
     layoutCanvas();
@@ -154,12 +329,47 @@ async function main() {
     draw();
   });
 
+  // Clicking the canvas should still type into the editor, so redirect focus to the
+  // (invisible) element that actually receives keyboard/clipboard events.
+  canvas.addEventListener("mousedown", () => inputSink.focus());
+
+  // Kept on `window` (not inputSink) so typing keeps working even if focus doesn't land on
+  // inputSink for some reason - keydown bubbles to window regardless of focus target, but
+  // `paste` (below) genuinely needs a focused editable element in most browsers, which is
+  // the only thing inputSink is for.
   window.addEventListener("keydown", (e) => {
+    // Ctrl/Cmd+V isn't bound to anything in Helix's own keymap outside a window-management
+    // submap, so forwarding it as a key event would just hit insert mode's fallback of
+    // inserting the literal "v" character. It exists here purely to trigger the browser's
+    // native paste - so hand focus to inputSink right now (synchronously, so it's actually
+    // focused by the time the OS delivers the paste this same keypress triggers) and leave
+    // the event alone entirely, instead of forwarding or preventing it.
+    // (keyToNotation doesn't read e.metaKey, so this checks the raw event instead.)
+    if (e.key === "v" && (e.ctrlKey || e.metaKey)) {
+      inputSink.focus();
+      return;
+    }
+
     const notation = keyToNotation(e);
     if (notation === null) return;
     sendKey(exports, notation);
     draw();
     e.preventDefault();
+  });
+
+  // Fires on Ctrl+V/Cmd+V while inputSink is focused; doesn't paste into the buffer by
+  // itself, it just primes `"+p"`/`"+P"` with what was pasted (see handlePaste above).
+  // Clear the textarea's own value afterward so it never accumulates stray content.
+  inputSink.addEventListener("paste", (e) => {
+    handlePaste(exports, e);
+    inputSink.value = "";
+  });
+
+  // Drag a file (or, in Chromium/Firefox, a whole folder) onto the page to open it - see
+  // `handleDrop`. `dragover` must call `preventDefault` too, or the browser refuses the drop.
+  window.addEventListener("dragover", (e) => e.preventDefault());
+  window.addEventListener("drop", (e) => {
+    handleDrop(exports, rootDir, e).then(draw);
   });
 }
 

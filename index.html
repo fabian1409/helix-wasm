@@ -3,13 +3,23 @@
 <head>
 <meta charset="utf-8"><title>helix-wasm</title>
 <link rel="icon" type="image/svg+xml" href="./logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
 <style>
   html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #000; }
   canvas { display: block; }
+  /* Off-screen but focusable/editable (not display:none, which can't hold focus) - see
+     the comment above its use in index.js for why this exists. */
+  #input-sink {
+    position: fixed; top: 0; left: 0; width: 1px; height: 1px;
+    opacity: 0; padding: 0; border: none; resize: none; overflow: hidden;
+  }
 </style>
 </head>
 <body>
 <canvas id="screen" style="background:#000"></canvas>
+<textarea id="input-sink" autocapitalize="off" autocomplete="off" spellcheck="false"></textarea>
 <script type="module" src="./index.js"></script>
 </body>
 </html>
