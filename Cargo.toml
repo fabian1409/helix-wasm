@@ -77,8 +77,13 @@ quickcheck = { version = "1", default-features = false }
 # tree-house-bindings unconditionally imports `libloading::{Library, Symbol}`, which don't
 # exist on wasm32-wasip1 - see vendor/tree-house-bindings/PATCH.md for the full story and
 # how helix-loader uses this on wasm32. No effect on other targets.
+#
+# nucleo (the fuzzy matcher behind every Picker, including the file picker) unconditionally
+# builds a real multi-threaded rayon::ThreadPool, which always fails to build on
+# wasm32-wasip1 (no OS threads) - see vendor/nucleo/PATCH.md. No effect on other targets.
 [patch.crates-io]
 tree-house-bindings = { path = "vendor/tree-house-bindings" }
+nucleo = { path = "vendor/nucleo" }
 
 [workspace.package]
 version = "25.7.1"

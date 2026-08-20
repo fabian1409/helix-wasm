@@ -182,6 +182,36 @@ fn open_impl(cx: &mut compositor::Context, args: Args, action: Action) -> anyhow
     Ok(())
 }
 
+/// Browser build has no file picker to fall back to for directories (no `ignore`-crate walk
+/// wired up here yet) and no jobs/tokio to hop through - files only, straight through
+/// `Editor::open` (already synchronous, see its wasm32 support in helix-view).
+#[cfg(target_arch = "wasm32")]
+fn open(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    open_impl(cx, args, Action::Replace)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn open_impl(cx: &mut compositor::Context, args: Args, action: Action) -> anyhow::Result<()> {
+    for arg in args {
+        let (path, pos) = crate::args::parse_file(&arg);
+        let path = helix_stdx::path::expand_tilde(path);
+        if std::fs::canonicalize(&path).map_or(false, |p| p.is_dir()) {
+            bail!("opening a directory is not supported in the browser build");
+        }
+
+        let _ = cx.editor.open(&path, action)?;
+        let (view, doc) = current!(cx.editor);
+        let pos = Selection::point(pos_at_coords(doc.text().slice(..), pos, true));
+        doc.set_selection(view.id, pos);
+        align_view(doc, view, Align::Center);
+    }
+    Ok(())
+}
+
 fn buffer_close_by_ids_impl(
     cx: &mut compositor::Context,
     doc_ids: &[DocumentId],
@@ -471,7 +501,6 @@ fn write_impl(
 }
 
 /// Trim all whitespace preceding line-endings in a document.
-#[cfg(not(target_arch = "wasm32"))]
 fn trim_trailing_whitespace(doc: &mut Document, view_id: ViewId) {
     let text = doc.text();
     let mut pos = 0;
@@ -500,7 +529,6 @@ fn trim_trailing_whitespace(doc: &mut Document, view_id: ViewId) {
 }
 
 /// Trim any extra line-endings after the final line-ending.
-#[cfg(not(target_arch = "wasm32"))]
 fn trim_final_newlines(doc: &mut Document, view_id: ViewId) {
     let rope = doc.text();
     let mut text = rope.slice(..);
@@ -522,7 +550,6 @@ fn trim_final_newlines(doc: &mut Document, view_id: ViewId) {
 }
 
 /// Ensure that the document is terminated with a line ending.
-#[cfg(not(target_arch = "wasm32"))]
 fn insert_final_newline(doc: &mut Document, view_id: ViewId) {
     let text = doc.text();
     if text.len_chars() > 0 && line_ending::get_line_ending(&text.slice(..)).is_none() {
@@ -571,6 +598,52 @@ fn force_write(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> 
             code_actions: !args.has_flag(WRITE_NO_CODE_ACTIONS_FLAG.name),
         },
     )
+}
+
+/// No LSP in the browser build (`feature = "lsp"` is off), so there's no auto-format /
+/// code-actions-on-save chain to build - trim/format the buffer synchronously same as native,
+/// then save synchronously via `Editor::save_sync` (no jobs/tokio to hop through).
+#[cfg(target_arch = "wasm32")]
+fn write_impl(cx: &mut compositor::Context, path: Option<&str>, force: bool) -> anyhow::Result<()> {
+    let config = cx.editor.config();
+    let (view, doc) = current!(cx.editor);
+    let view_id = view.id;
+
+    if doc.trim_trailing_whitespace() {
+        trim_trailing_whitespace(doc, view_id);
+    }
+    if config.trim_final_newlines {
+        trim_final_newlines(doc, view_id);
+    }
+    if doc.insert_final_newline() {
+        insert_final_newline(doc, view_id);
+    }
+
+    doc.append_changes_to_history(view);
+
+    let doc_id = doc.id();
+    let path: Option<PathBuf> = path.map(Into::into);
+    cx.editor.save_sync(doc_id, path, force)?;
+
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn write(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    write_impl(cx, args.first(), false)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn force_write(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    write_impl(cx, args.first(), true)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -3111,7 +3184,6 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
-    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "open",
         aliases: &["o", "edit", "e"],
@@ -3205,7 +3277,6 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
-    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "write",
         aliases: &["w"],
@@ -3218,7 +3289,6 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
-    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "write!",
         aliases: &["w!"],

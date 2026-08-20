@@ -2150,7 +2150,6 @@ impl Editor {
     }
 
     // ??? possible use for integration tests
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn open(&mut self, path: &Path, action: Action) -> Result<DocumentId, DocumentOpenError> {
         let path = helix_stdx::path::canonicalize(path);
         let id = self.document_id_by_path(&path);
@@ -2166,9 +2165,12 @@ impl Editor {
                 self.syn_loader.clone(),
             )?;
 
-            let diagnostics =
-                Editor::doc_diagnostics(&self.language_servers, &self.diagnostics, &doc);
-            doc.replace_diagnostics(diagnostics, &[], None);
+            #[cfg(feature = "lsp")]
+            {
+                let diagnostics =
+                    Editor::doc_diagnostics(&self.language_servers, &self.diagnostics, &doc);
+                doc.replace_diagnostics(diagnostics, &[], None);
+            }
 
             let trust_full = self
                 .workspace_trust
@@ -2182,6 +2184,7 @@ impl Editor {
             );
 
             let id = self.new_document(doc);
+            #[cfg(feature = "lsp")]
             self.launch_language_servers(id);
 
             helix_event::dispatch(DocumentDidOpen {
@@ -2320,6 +2323,23 @@ impl Editor {
 
         self.write_count += 1;
 
+        Ok(())
+    }
+
+    /// Synchronous counterpart to `save` for the wasm32 build, which has no async executor to
+    /// drive `save`'s queued future (`wait_event`, the only thing that ever drains
+    /// `save_queue`, is itself native-only) - see `Document::save_sync`.
+    #[cfg(target_arch = "wasm32")]
+    pub fn save_sync<P: Into<PathBuf>>(
+        &mut self,
+        doc_id: DocumentId,
+        path: Option<P>,
+        force: bool,
+    ) -> anyhow::Result<()> {
+        let path = path.map(|path| path.into());
+        let doc = doc_mut!(self, &doc_id);
+        doc.save_sync(path, force)?;
+        self.write_count += 1;
         Ok(())
     }
 

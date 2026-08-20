@@ -715,6 +715,64 @@ pub async fn to_writer<'a, W: tokio::io::AsyncWriteExt + Unpin + ?Sized>(
     Ok(())
 }
 
+// Synchronous mirror of `to_writer` for the wasm32 build, which has no tokio runtime to drive
+// `AsyncWriteExt`. See `Document::save_sync`. Keep in sync with `to_writer` above.
+#[cfg(target_arch = "wasm32")]
+pub fn to_writer_sync<'a, W: std::io::Write + ?Sized>(
+    writer: &'a mut W,
+    encoding_with_bom_info: (&'static Encoding, bool),
+    rope: &'a Rope,
+) -> Result<(), Error> {
+    let (encoding, has_bom) = encoding_with_bom_info;
+
+    let iter = rope
+        .chunks()
+        .filter(|c| !c.is_empty())
+        .chain(std::iter::once(""));
+    let mut buf = [0u8; BUF_SIZE];
+
+    let mut total_written = if has_bom {
+        apply_bom(encoding, &mut buf)
+    } else {
+        0
+    };
+
+    let mut encoder = Encoder::from_encoding(encoding);
+
+    for chunk in iter {
+        let is_empty = chunk.is_empty();
+        let mut total_read = 0usize;
+
+        loop {
+            let (result, read, written, ..) =
+                encoder.encode_from_utf8(&chunk[total_read..], &mut buf[total_written..], is_empty);
+
+            total_read += read;
+            total_written += written;
+            match result {
+                encoding::CoderResult::InputEmpty => {
+                    debug_assert_eq!(chunk.len(), total_read);
+                    debug_assert!(buf.len() >= total_written);
+                    break;
+                }
+                encoding::CoderResult::OutputFull => {
+                    debug_assert!(chunk.len() > total_read);
+                    writer.write_all(&buf[..total_written])?;
+                    total_written = 0;
+                }
+            }
+        }
+
+        if is_empty {
+            writer.write_all(&buf[..total_written])?;
+            writer.flush()?;
+            break;
+        }
+    }
+
+    Ok(())
+}
+
 fn take_with<T, F>(mut_ref: &mut T, f: F)
 where
     T: Default,
@@ -804,7 +862,6 @@ impl Document {
     // TODO: async fn?
     /// Create a new document from `path`. Encoding is auto-detected, but it can be manually
     /// overwritten with the `encoding` parameter.
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn open(
         path: &Path,
         mut encoding: Option<&'static Encoding>,
@@ -1219,6 +1276,66 @@ impl Document {
         };
 
         Ok(future)
+    }
+
+    /// Synchronous counterpart to `save`/`save_impl` for the wasm32 build: there's no tokio
+    /// runtime to drive the async version's `tokio::fs` calls (nor an executor to poll the
+    /// future `save` hands off to `Editor::saves` - `wait_event`, the only thing that ever
+    /// drains that queue, is native-only), so this writes synchronously and returns instead of
+    /// producing a future. Skips the atomic-save/backup-file dance `save_impl` does for crash
+    /// safety - not a meaningful concern for an in-memory, session-only virtual filesystem.
+    #[cfg(target_arch = "wasm32")]
+    pub fn save_sync<P: Into<PathBuf>>(
+        &mut self,
+        path: Option<P>,
+        force: bool,
+    ) -> Result<(), anyhow::Error> {
+        let path = match path.map(Into::into) {
+            Some(path) => helix_stdx::path::canonicalize(path),
+            None => {
+                if self.path.is_none() {
+                    bail!("Can't save with no path set!");
+                }
+                self.path.as_ref().unwrap().clone()
+            }
+        };
+
+        if let Some(parent) = path.parent() {
+            if !parent.exists() {
+                if force {
+                    std::fs::DirBuilder::new().recursive(true).create(parent)?;
+                } else {
+                    bail!("can't save file, parent directory does not exist (use :w! to create it)");
+                }
+            }
+        }
+
+        if !force {
+            if let Ok(metadata) = std::fs::metadata(&path) {
+                if let Ok(mtime) = metadata.modified() {
+                    if self.last_saved_time < mtime {
+                        bail!("file modified by an external process, use :w! to overwrite");
+                    }
+                }
+            }
+        }
+
+        let current_rev = self.get_current_revision();
+        let encoding_with_bom_info = (self.encoding, self.has_bom);
+
+        let mut dst = std::fs::File::create(&path)?;
+        to_writer_sync(&mut dst, encoding_with_bom_info, self.text())?;
+
+        let save_time = std::fs::metadata(&path)
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or_else(|_| SystemTime::now());
+
+        if self.path.is_none() {
+            self.set_path(Some(&path));
+        }
+        self.set_last_saved_revision(current_rev, save_time);
+
+        Ok(())
     }
 
     /// Detect the programming language based on the file type.

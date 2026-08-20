@@ -1,6 +1,6 @@
 import WASI from "./vendor/browser_wasi_shim/wasi.js";
 import { Fd } from "./vendor/browser_wasi_shim/fd.js";
-import { ConsoleStdout } from "./vendor/browser_wasi_shim/fs_mem.js";
+import { ConsoleStdout, Directory, File, PreopenDirectory } from "./vendor/browser_wasi_shim/fs_mem.js";
 
 const CELL_W = 8, CELL_H = 16;
 let COLS = 0, ROWS = 0;
@@ -51,7 +51,17 @@ function rgb(packed) {
 // our no-op `main`, then exits) against a minimal WASI host, and returns its `exports` -
 // still fully callable afterward, since "exiting" only unwinds the `_start` call, not the
 // wasm instance itself.
+//
+// One preopened directory at `/` gives the guest a real (session-only, in-memory)
+// filesystem: config.toml/languages.toml overrides (see `helix_loader::config_dir()` etc.
+// and `build_application` in helix-wasm/src/main.rs) live at the root right alongside
+// whatever files the user drops in (see `handleDrop` below) - there's no separate
+// config/cache/data/workspace split. Nothing here persists across a reload. `rootDir` is
+// kept around so JS can seed `File` objects directly (bypassing WASI syscalls) for
+// drag-and-drop.
 async function loadHelixWasm() {
+  const rootDir = new Directory(new Map());
+
   const wasi = new WASI(
     [],
     // `HOME` is only used to build paths (config/cache dirs); nothing here touches a real
@@ -62,6 +72,7 @@ async function loadHelixWasm() {
       new Fd(), // stdin: unused, default Fd methods (ERRNO_NOTSUP) are fine.
       ConsoleStdout.lineBuffered((line) => console.log(line)),
       ConsoleStdout.lineBuffered((line) => console.error(line)),
+      new PreopenDirectory("/", rootDir.contents),
     ],
     // The shim's debug logging defaults to *on* if this isn't passed at all.
     { debug: false },
@@ -72,7 +83,7 @@ async function loadHelixWasm() {
   });
 
   wasi.start(instance);
-  return instance.exports;
+  return { exports: instance.exports, rootDir };
 }
 
 // Writes `notation`'s UTF-8 bytes into the scratch buffer `hx_key_buf_ptr` exposes (see
@@ -113,8 +124,90 @@ function handlePaste(exports, e) {
   e.preventDefault();
 }
 
+// Writes `path`'s UTF-8 bytes into the scratch buffer `hx_open_path_alloc` grows to fit and
+// calls `hx_open_path` to open it in the current view. `path` must already exist in the
+// virtual filesystem (see `insertFile`) - this is what `handleDrop` calls after seeding a file.
+function openPath(exports, path) {
+  const bytes = new TextEncoder().encode(path);
+  const ptr = exports.hx_open_path_alloc(bytes.length);
+  new Uint8Array(exports.memory.buffer, ptr, bytes.length).set(bytes);
+  exports.hx_open_path(bytes.length);
+}
+
+// Inserts `bytes` at `relPath` (e.g. "src/main.rs") under `rootDir`, creating any
+// intermediate directories, and returns the absolute WASI path.
+function insertFile(rootDir, relPath, bytes) {
+  const parts = relPath.split("/").filter(Boolean);
+  let dir = rootDir;
+  for (let i = 0; i < parts.length - 1; i++) {
+    let next = dir.contents.get(parts[i]);
+    if (!(next instanceof Directory)) {
+      next = new Directory(new Map());
+      dir.contents.set(parts[i], next);
+    }
+    dir = next;
+  }
+  dir.contents.set(parts[parts.length - 1], new File(bytes));
+  return "/" + parts.join("/");
+}
+
+// Recursively reads a dropped `FileSystemEntry` (a plain file, or a directory - from
+// dragging a whole folder in, Chromium/Firefox only) into a flat list of
+// [relative path, bytes] pairs `handleDrop` can hand to `insertFile`.
+function readEntry(entry, prefix) {
+  return new Promise((resolve) => {
+    if (entry.isFile) {
+      entry.file((file) => {
+        file.arrayBuffer().then((buf) => resolve([[prefix + entry.name, new Uint8Array(buf)]]));
+      });
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const children = [];
+      const readBatch = () => {
+        reader.readEntries((batch) => {
+          if (batch.length === 0) {
+            Promise.all(children.map((child) => readEntry(child, prefix + entry.name + "/"))).then(
+              (lists) => resolve(lists.flat()),
+            );
+            return;
+          }
+          children.push(...batch);
+          readBatch();
+        });
+      };
+      readBatch();
+    } else {
+      resolve([]);
+    }
+  });
+}
+
+// Seeds every file dropped onto the page into the virtual filesystem's root and opens each
+// in the current view (replacing whatever's focused there - dropping more than one file at
+// once just leaves the last one open).
+async function handleDrop(exports, rootDir, e) {
+  e.preventDefault();
+
+  const items = Array.from(e.dataTransfer.items || []);
+  const entries = items.map((item) => item.webkitGetAsEntry?.()).filter(Boolean);
+
+  let files;
+  if (entries.length > 0) {
+    files = (await Promise.all(entries.map((entry) => readEntry(entry, "")))).flat();
+  } else {
+    // Fallback for browsers without `webkitGetAsEntry` - flat files only, no folder drop.
+    files = await Promise.all(
+      Array.from(e.dataTransfer.files).map(async (f) => [f.name, new Uint8Array(await f.arrayBuffer())]),
+    );
+  }
+
+  for (const [relPath, bytes] of files) {
+    openPath(exports, insertFile(rootDir, relPath, bytes));
+  }
+}
+
 async function main() {
-  const exports = await loadHelixWasm();
+  const { exports, rootDir } = await loadHelixWasm();
 
   const canvas = document.getElementById("screen");
   const ctx = canvas.getContext("2d");
@@ -223,6 +316,13 @@ async function main() {
   inputSink.addEventListener("paste", (e) => {
     handlePaste(exports, e);
     inputSink.value = "";
+  });
+
+  // Drag a file (or, in Chromium/Firefox, a whole folder) onto the page to open it - see
+  // `handleDrop`. `dragover` must call `preventDefault` too, or the browser refuses the drop.
+  window.addEventListener("dragover", (e) => e.preventDefault());
+  window.addEventListener("drop", (e) => {
+    handleDrop(exports, rootDir, e).then(draw);
   });
 }
 

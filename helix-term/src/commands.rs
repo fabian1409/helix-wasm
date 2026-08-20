@@ -734,8 +734,11 @@ mod shell_command_stubs {
         shell_keep_pipe,
     );
 
-    // File pickers/explorers need real directory listing, which has no
-    // wasm32 equivalent in this MVP (no filesystem at all).
+    // The file/directory picker, explorer, and `gf`/goto_file now work against the browser
+    // build's virtual filesystem (see `ui::file_picker`/`file_explorer`, `goto_file_impl`),
+    // but these three still need functionality this MVP doesn't have: workspace-wide grep
+    // (`global_search`) and git status (`changed_file_picker`); `syntax_workspace_symbol_picker`
+    // needs the same workspace-wide walk as `global_search`.
     fn unsupported_fs(cx: &mut Context) {
         cx.editor.set_error("this command requires filesystem access, unavailable in this build");
     }
@@ -747,15 +750,6 @@ mod shell_command_stubs {
     }
 
     fs_stub!(
-        file_picker,
-        file_picker_in_current_buffer_directory,
-        file_picker_in_current_directory,
-        file_explorer,
-        file_explorer_in_current_buffer_directory,
-        file_explorer_in_current_directory,
-        goto_file,
-        goto_file_hsplit,
-        goto_file_vsplit,
         syntax_workspace_symbol_picker,
         global_search,
         changed_file_picker,
@@ -1474,23 +1468,20 @@ fn goto_file_end_impl(cx: &mut Context, movement: Movement) {
     doc.set_selection(view.id, selection);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn goto_file(cx: &mut Context) {
     goto_file_impl(cx, Action::Replace);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn goto_file_hsplit(cx: &mut Context) {
     goto_file_impl(cx, Action::HorizontalSplit);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn goto_file_vsplit(cx: &mut Context) {
     goto_file_impl(cx, Action::VerticalSplit);
 }
 
 /// Returns true when a selection overlaps an LSP document link range.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "lsp")]
 fn selection_overlaps_document_link(
     selection: &Range,
     link: &helix_view::document::DocumentLink,
@@ -1508,7 +1499,7 @@ fn selection_overlaps_document_link(
 /// This only builds the LSP request. The request is awaited from a background
 /// job so `goto_file_impl` does not block the UI thread while the language
 /// server resolves the target.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "lsp")]
 fn resolve_document_link_request(
     editor: &Editor,
     link: &helix_view::document::DocumentLink,
@@ -1533,7 +1524,6 @@ fn resolve_document_link_request(
 ///
 /// Prefers LSP document links when the cursor/selection overlaps a link range,
 /// falling back to the built-in path/URL detection otherwise.
-#[cfg(not(target_arch = "wasm32"))]
 fn goto_file_impl(cx: &mut Context, action: Action) {
     let (view, doc) = current_ref!(cx.editor);
     let text = doc.text().clone();
@@ -1544,72 +1534,83 @@ fn goto_file_impl(cx: &mut Context, action: Action) {
         .unwrap_or_default();
     let text = text.slice(..);
 
-    let mut lsp_targets = Vec::new();
-    let mut lsp_targets_seen = HashSet::new();
-    let mut unresolved_links = HashSet::new();
-    let mut resolve_requests = Vec::new();
-    let mut fallback_ranges = Vec::new();
+    // No `document.document_links` (or any other LSP state) to prefer without the "lsp"
+    // feature - every selection just falls through to the plain path/URL detection below.
+    #[cfg(not(feature = "lsp"))]
+    let fallback_ranges = selections.clone();
 
-    if doc.document_links.is_empty() {
-        fallback_ranges.extend_from_slice(&selections);
-    } else {
-        for selection in &selections {
-            let mut matched = false;
-            for link in &doc.document_links {
-                if !selection_overlaps_document_link(selection, link) {
-                    continue;
-                }
-                matched = true;
-                if let Some(target) = link.link.target.clone() {
-                    if lsp_targets_seen.insert(target.clone()) {
-                        lsp_targets.push(target);
+    #[cfg(feature = "lsp")]
+    let fallback_ranges = {
+        let mut lsp_targets = Vec::new();
+        let mut lsp_targets_seen = HashSet::new();
+        let mut unresolved_links = HashSet::new();
+        let mut resolve_requests = Vec::new();
+        let mut fallback_ranges = Vec::new();
+
+        if doc.document_links.is_empty() {
+            fallback_ranges.extend_from_slice(&selections);
+        } else {
+            for selection in &selections {
+                let mut matched = false;
+                for link in &doc.document_links {
+                    if !selection_overlaps_document_link(selection, link) {
+                        continue;
                     }
-                } else if unresolved_links.insert((link.start, link.end, link.language_server_id)) {
-                    if let Some(request) = resolve_document_link_request(cx.editor, link) {
-                        resolve_requests.push(request);
-                    }
-                }
-            }
-            if !matched {
-                fallback_ranges.push(*selection);
-            }
-        }
-    }
-
-    for target in lsp_targets {
-        open_url(cx, target, action);
-    }
-
-    if !resolve_requests.is_empty() {
-        let rel_path = rel_path.clone();
-        cx.jobs.callback(async move {
-            let mut targets = Vec::new();
-            let mut seen = HashSet::new();
-
-            // Resolve links off the main thread, then hand the resulting URLs
-            // back to the editor/compositor callback once all requests finish.
-            for request in resolve_requests {
-                match request.await {
-                    Ok(link) => {
-                        if let Some(target) = link.target {
-                            if seen.insert(target.clone()) {
-                                targets.push(target);
-                            }
+                    matched = true;
+                    if let Some(target) = link.link.target.clone() {
+                        if lsp_targets_seen.insert(target.clone()) {
+                            lsp_targets.push(target);
+                        }
+                    } else if unresolved_links.insert((link.start, link.end, link.language_server_id))
+                    {
+                        if let Some(request) = resolve_document_link_request(cx.editor, link) {
+                            resolve_requests.push(request);
                         }
                     }
-                    Err(err) => log::warn!("Failed to resolve document link: {err}"),
+                }
+                if !matched {
+                    fallback_ranges.push(*selection);
                 }
             }
+        }
 
-            Ok(Callback::EditorCompositor(Box::new(
-                move |editor, compositor| {
-                    for target in targets {
-                        open_url_in_callback(editor, compositor, target, action, &rel_path);
+        for target in lsp_targets {
+            open_url(cx, target, action);
+        }
+
+        if !resolve_requests.is_empty() {
+            let rel_path = rel_path.clone();
+            cx.jobs.callback(async move {
+                let mut targets = Vec::new();
+                let mut seen = HashSet::new();
+
+                // Resolve links off the main thread, then hand the resulting URLs
+                // back to the editor/compositor callback once all requests finish.
+                for request in resolve_requests {
+                    match request.await {
+                        Ok(link) => {
+                            if let Some(target) = link.target {
+                                if seen.insert(target.clone()) {
+                                    targets.push(target);
+                                }
+                            }
+                        }
+                        Err(err) => log::warn!("Failed to resolve document link: {err}"),
                     }
-                },
-            )))
-        });
-    }
+                }
+
+                Ok(Callback::EditorCompositor(Box::new(
+                    move |editor, compositor| {
+                        for target in targets {
+                            open_url_in_callback(editor, compositor, target, action, &rel_path);
+                        }
+                    },
+                )))
+            });
+        }
+
+        fallback_ranges
+    };
 
     if fallback_ranges.is_empty() {
         return;
@@ -1665,7 +1666,6 @@ fn goto_file_impl(cx: &mut Context, action: Action) {
 
 /// Opens the given url. If the URL points to a valid textual file it is open in helix.
 /// Otherwise, the file is open using external program.
-#[cfg(not(target_arch = "wasm32"))]
 fn open_url(cx: &mut Context, url: Url, action: Action) {
     let doc = doc!(cx.editor);
     let rel_path = doc
@@ -1674,6 +1674,16 @@ fn open_url(cx: &mut Context, url: Url, action: Action) {
         .unwrap_or_default();
 
     if should_open_url_externally(&url) {
+        // No jobs-draining loop exists on wasm32 (see `Application::handle_key`) for a
+        // queued `cx.jobs.callback` to ever actually run, so report this synchronously
+        // instead of going through the same path native does.
+        #[cfg(target_arch = "wasm32")]
+        {
+            cx.editor
+                .set_error("Opening external URLs is not supported");
+            return;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         return cx.jobs.callback(crate::open_external_url_callback(url));
     }
 
@@ -3321,7 +3331,6 @@ fn append_mode(cx: &mut Context) {
     doc.set_selection(view.id, selection);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn file_picker(cx: &mut Context) {
     let root = find_workspace().0;
     if !root.exists() {
@@ -3332,7 +3341,6 @@ fn file_picker(cx: &mut Context) {
     cx.push_layer(Box::new(overlaid(picker)));
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn file_picker_in_current_buffer_directory(cx: &mut Context) {
     let doc_dir = doc!(cx.editor)
         .path()
@@ -3359,7 +3367,6 @@ fn file_picker_in_current_buffer_directory(cx: &mut Context) {
     cx.push_layer(Box::new(overlaid(picker)));
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn file_picker_in_current_directory(cx: &mut Context) {
     let cwd = helix_stdx::env::current_working_dir();
     if !cwd.exists() {
@@ -3371,7 +3378,6 @@ fn file_picker_in_current_directory(cx: &mut Context) {
     cx.push_layer(Box::new(overlaid(picker)));
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn file_explorer(cx: &mut Context) {
     let root = find_workspace().0;
     if !root.exists() {
@@ -3384,7 +3390,6 @@ fn file_explorer(cx: &mut Context) {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn file_explorer_in_current_buffer_directory(cx: &mut Context) {
     let doc_dir = doc!(cx.editor)
         .path()
@@ -3412,7 +3417,6 @@ fn file_explorer_in_current_buffer_directory(cx: &mut Context) {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn file_explorer_in_current_directory(cx: &mut Context) {
     let cwd = helix_stdx::env::current_working_dir();
     if !cwd.exists() {

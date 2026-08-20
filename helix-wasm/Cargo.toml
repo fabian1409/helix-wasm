@@ -13,4 +13,5 @@ helix-core = { path = "../helix-core" }
 helix-view = { path = "../helix-view", default-features = false }
 helix-term = { path = "../helix-term", default-features = false }
 helix-loader = { path = "../helix-loader" }
+helix-stdx = { path = "../helix-stdx" }
 helix-tui = { path = "../helix-tui", default-features = false, features = ["wasm-backend"] }

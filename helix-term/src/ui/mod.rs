@@ -200,7 +200,6 @@ pub fn raw_regex_prompt(
 }
 
 /// We want to exclude files that the editor can't handle yet
-#[cfg(not(target_arch = "wasm32"))]
 fn get_excluded_types() -> ignore::types::Types {
     use ignore::types::TypesBuilder;
     let mut type_builder = TypesBuilder::new();
@@ -216,16 +215,13 @@ fn get_excluded_types() -> ignore::types::Types {
         .expect("failed to build excluded_types")
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub struct FilePickerData {
     root: PathBuf,
     directory_style: Style,
 }
-#[cfg(not(target_arch = "wasm32"))]
 type FilePicker = Picker<PathBuf, FilePickerData>;
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn file_picker(editor: &Editor, root: PathBuf) -> FilePicker {
     use ignore::WalkBuilder;
     use std::time::Instant;
@@ -298,33 +294,45 @@ pub fn file_picker(editor: &Editor, root: PathBuf) -> FilePicker {
     })
     .with_preview(|_editor, path| Some((path.as_path().into(), None)));
     let injector = picker.injector();
-    let timeout = std::time::Instant::now() + std::time::Duration::from_millis(30);
 
-    let mut hit_timeout = false;
-    for file in &mut files {
+    // wasip1 has no threads to hand the remainder off to once the timeout below fires, and
+    // the browser's virtual filesystem is small enough in practice that just draining it
+    // synchronously is fine - no user-visible difference from the native fast path.
+    #[cfg(target_arch = "wasm32")]
+    for file in files {
         if injector.push(file).is_err() {
             break;
         }
-        if std::time::Instant::now() >= timeout {
-            hit_timeout = true;
-            break;
-        }
     }
-    if hit_timeout {
-        std::thread::spawn(move || {
-            for file in files {
-                if injector.push(file).is_err() {
-                    break;
-                }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let timeout = std::time::Instant::now() + std::time::Duration::from_millis(30);
+        let mut hit_timeout = false;
+        for file in &mut files {
+            if injector.push(file).is_err() {
+                break;
             }
-        });
+            if std::time::Instant::now() >= timeout {
+                hit_timeout = true;
+                break;
+            }
+        }
+        if hit_timeout {
+            std::thread::spawn(move || {
+                for file in files {
+                    if injector.push(file).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
     }
     picker
 }
 
 type FileExplorer = Picker<(PathBuf, bool), (PathBuf, Style)>;
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn file_explorer(root: PathBuf, editor: &Editor) -> Result<FileExplorer, std::io::Error> {
     let directory_style = editor.theme.get("ui.text.directory");
     let directory_content = directory_content(&root, editor)?;
@@ -373,7 +381,6 @@ pub fn file_explorer(root: PathBuf, editor: &Editor) -> Result<FileExplorer, std
     Ok(picker)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn directory_content(root: &Path, editor: &Editor) -> Result<Vec<(PathBuf, bool)>, std::io::Error> {
     use ignore::WalkBuilder;
 
@@ -421,7 +428,6 @@ fn directory_content(root: &Path, editor: &Editor) -> Result<Vec<(PathBuf, bool)
     Ok(content)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn get_child_if_single_dir(path: &Path) -> Option<PathBuf> {
     let mut entries = path.read_dir().ok()?;
     let entry = entries.next()?.ok()?;

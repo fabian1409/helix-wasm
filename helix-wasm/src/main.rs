@@ -8,9 +8,12 @@ mod app {
     use std::str::FromStr;
     use std::sync::Once;
 
-    use helix_core::syntax::{self, config::Configuration};
-    use helix_loader::workspace_trust::{self, WorkspaceTrust};
-    use helix_term::{application::Application, args::Args, config::Config};
+    use helix_loader::workspace_trust::WorkspaceTrust;
+    use helix_term::{
+        application::Application,
+        args::Args,
+        config::{Config, ConfigLoadError},
+    };
     use helix_view::{
         graphics::{Color, CursorKind, Modifier},
         input::KeyEvent,
@@ -33,6 +36,9 @@ thread_local! {
     // before calling `hx_paste`; unlike KEY_BUF this is unbounded since pasted text has no
     // fixed max length, so it's grown to fit via `hx_paste_alloc` instead of a fixed array.
     static PASTE_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::new());
+    // Scratch buffer the JS host writes a WASI path into before calling `hx_open_path`;
+    // grown to fit via `hx_open_path_alloc`, same reasoning as PASTE_BUF.
+    static OPEN_PATH_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::new());
 }
 
 fn cursor_kind_id(kind: CursorKind) -> c_int {
@@ -51,15 +57,46 @@ fn with_app<R>(f: impl FnOnce(&mut Application) -> R) -> Option<R> {
 }
 
 fn build_application(cols: u16, rows: u16) -> anyhow::Result<Application> {
-    // Same embedded `languages.toml` native Helix uses, so file-type detection, comment
-    // tokens, indentation etc. all come along for free; `get_language` in helix-loader
-    // only actually has a grammar to hand back for "rust" (see helix-loader/src/grammar.rs),
-    // so every other configured language is otherwise inert here, same as native Helix
-    // when a grammar isn't built.
-    let lang_config: Configuration = helix_loader::config::default_lang_config().try_into()?;
-    let lang_loader = syntax::Loader::new(lang_config)?;
-    let workspace_trust = WorkspaceTrust::new(workspace_trust::Config::default());
-    let mut app = Application::new(Args::default(), Config::default(), lang_loader, workspace_trust)?;
+    // `helix_stdx::env::current_working_dir()` (used by `find_workspace()`, in turn used by
+    // `Config::load_default()`, the file picker, etc.) unwraps `std::env::current_dir()` -
+    // which has no meaningful answer on wasm32-wasip1 without this - so seed it once, up
+    // front, with the WASI preopen's root.
+    helix_stdx::env::set_current_working_dir(std::path::Path::new("/")).ok();
+
+    // `config_file()`/`log_file()` read from a `OnceCell` only native `main` normally
+    // populates (via CLI args) before anything calls `Config::load_default()` - without
+    // this, `config_file()` unwraps a `None` and panics the whole instance.
+    helix_loader::initialize_config_file(None);
+    helix_loader::initialize_log_file(None);
+
+    // Reads+merges global/workspace `config.toml` the same way native Helix's `main` does -
+    // now that `/` is a real (JS-preopened) WASI directory instead of resolving to nothing, a
+    // dropped-in config.toml takes effect here with no further wiring.
+    let config = match Config::load_default() {
+        Ok(config) => config,
+        Err(ConfigLoadError::Error(err)) if err.kind() == std::io::ErrorKind::NotFound => {
+            Config::default()
+        }
+        Err(ConfigLoadError::Error(err)) => return Err(err.into()),
+        Err(ConfigLoadError::BadConfig(err)) => {
+            eprintln!("helix-wasm: bad config.toml, using defaults: {err}");
+            Config::default()
+        }
+    };
+
+    let workspace_trust = WorkspaceTrust::new((&config.editor.workspace_trust).into());
+
+    // Same embedded `languages.toml` native Helix uses, merged with any user/workspace
+    // `languages.toml` dropped into the virtual filesystem (trust-gated, same as native) - so
+    // file-type detection, comment tokens, indentation etc. all come along for free;
+    // `get_language` in helix-loader only actually has a grammar to hand back for "rust" (see
+    // helix-loader/src/grammar.rs), so every other configured language is otherwise inert
+    // here, same as native Helix when a grammar isn't built.
+    let lang_loader = helix_core::config::user_lang_loader(&workspace_trust).unwrap_or_else(|err| {
+        eprintln!("helix-wasm: {err}, using default language config");
+        helix_core::config::default_lang_loader()
+    });
+    let mut app = Application::new(Args::default(), config, lang_loader, workspace_trust)?;
     app.resize(cols, rows);
 
     // There's no file path in the browser for language auto-detection to key off of, so
@@ -192,6 +229,42 @@ pub extern "C" fn hx_key(len: u32) {
     if let Some(text) = helix_view::clipboard::take_pending_copy() {
         COPY_BUF.with(|buf| *buf.borrow_mut() = text.into_bytes());
     }
+}
+
+/// Grows the scratch buffer read by `hx_open_path` to `len` bytes and returns a pointer for
+/// the caller to write a UTF-8 WASI path into (e.g. `/foo.rs`, after seeding that file into
+/// the preopened root directory) before calling `hx_open_path(len)`.
+#[no_mangle]
+pub extern "C" fn hx_open_path_alloc(len: u32) -> *mut u8 {
+    OPEN_PATH_BUF.with(|buf| {
+        let mut buf = buf.borrow_mut();
+        buf.clear();
+        buf.resize(len as usize, 0);
+        buf.as_mut_ptr()
+    })
+}
+
+/// Opens the `len`-byte UTF-8 path at `hx_open_path_alloc`'s pointer in the current view
+/// (replacing whatever document is focused there, same as a dropped file replacing the
+/// buffer it landed on). Doesn't render - call `hx_render` after, same as `hx_key`.
+#[no_mangle]
+pub extern "C" fn hx_open_path(len: u32) {
+    let path = OPEN_PATH_BUF.with(|buf| {
+        let buf = buf.borrow();
+        let len = (len as usize).min(buf.len());
+        std::str::from_utf8(&buf[..len]).map(str::to_owned)
+    });
+    let Ok(path) = path else {
+        return;
+    };
+    with_app(|app| {
+        if let Err(err) = app
+            .editor
+            .open(std::path::Path::new(&path), helix_view::editor::Action::Replace)
+        {
+            app.editor.set_error(format!("{err}"));
+        }
+    });
 }
 
 /// Non-zero if a clipboard write (e.g. `"+y`) happened during the last `hx_key` call and

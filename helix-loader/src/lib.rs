@@ -123,22 +123,23 @@ pub fn runtime_file(rel_path: impl AsRef<Path>) -> PathBuf {
 }
 
 // `std::env::home_dir()` (which `etcetera::choose_base_strategy()` relies on) always
-// returns `None` on wasm32-wasip1 regardless of `$HOME`, and there's no real filesystem in
-// a browser for these paths to point at anyway - every caller already treats a config/
-// cache/data path that doesn't exist as the normal case, so a fixed placeholder is fine.
+// returns `None` on wasm32-wasip1 regardless of `$HOME`. There's also no real distinction
+// between "config"/"cache"/"data" locations in the browser build's single-directory virtual
+// filesystem (see helix-wasm/www/index.js's one WASI preopen at `/`) - config.toml, the log
+// file, etc. all just live alongside whatever documents the user has open, at the root.
 #[cfg(target_arch = "wasm32")]
 pub fn config_dir() -> PathBuf {
-    PathBuf::from("/helix/config")
+    PathBuf::from("/")
 }
 
 #[cfg(target_arch = "wasm32")]
 pub fn cache_dir() -> PathBuf {
-    PathBuf::from("/helix/cache")
+    PathBuf::from("/")
 }
 
 #[cfg(target_arch = "wasm32")]
 pub fn data_dir() -> PathBuf {
-    PathBuf::from("/helix/data")
+    PathBuf::from("/")
 }
 
 #[cfg(not(target_arch = "wasm32"))]

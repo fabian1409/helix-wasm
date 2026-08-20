@@ -590,9 +590,11 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
         let (path_or_id, range) = (self.file_fn.as_ref()?)(editor, current)?;
 
         match path_or_id {
-            #[cfg(target_arch = "wasm32")]
-            PathOrId::Path(_) => None,
-            #[cfg(not(target_arch = "wasm32"))]
+            // Preview content still works (plain `std::fs`, synchronous) - only syntax
+            // highlighting is unavailable, since `preview_highlight_handler`'s worker never
+            // spawns without a tokio runtime; `send_blocking` to it is then just a no-op
+            // (the channel's receiver is dropped, so sends fail immediately rather than
+            // blocking), so previews render as plain text instead of hanging.
             PathOrId::Path(path) => {
                 if let Some(doc) = editor.document_by_path(path) {
                     return Some((Preview::EditorDocument(doc), range));
