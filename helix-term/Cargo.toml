@@ -84,7 +84,7 @@ dashmap = "6.2"
 parking_lot.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-crossterm = { version = "0.28", features = ["event-stream"] }
+crossterm = { version = "0.29", features = ["event-stream"] }
 
 [target.'cfg(not(any(windows, target_arch = "wasm32")))'.dependencies]  # https://github.com/vorner/signal-hook/issues/100
 signal-hook = "0.4"
