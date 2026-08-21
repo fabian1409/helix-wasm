@@ -9,8 +9,8 @@ use helix_view::graphics::{Rect, Style};
 /// Border render type. Defaults to [`BorderType::Plain`].
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum BorderType {
-    #[default]
     Plain,
+    #[default]
     Rounded,
     Double,
     Thick,
@@ -63,7 +63,7 @@ impl<'a> Block<'a> {
             title: None,
             borders: Borders::empty(),
             border_style: Style::new(),
-            border_type: BorderType::Plain,
+            border_type: BorderType::Rounded,
             style: Style::new(),
         }
     }

@@ -871,7 +871,8 @@ impl std::ops::Deref for CursorShapeConfig {
 
 impl Default for CursorShapeConfig {
     fn default() -> Self {
-        Self([CursorKind::Block; 3])
+        // Indexed by `Mode as usize`: [Normal, Select, Insert].
+        Self([CursorKind::Block, CursorKind::Block, CursorKind::Bar])
     }
 }
 
@@ -1199,7 +1200,7 @@ impl Default for Config {
             } else {
                 vec!["sh".to_owned(), "-c".to_owned()]
             },
-            line_number: LineNumber::Absolute,
+            line_number: LineNumber::Relative,
             cursorline: false,
             cursorcolumn: false,
             gutters: GutterConfig::default(),
@@ -1229,7 +1230,7 @@ impl Default for Config {
             whitespace: WhitespaceConfig::default(),
             bufferline: BufferLine::default(),
             indent_guides: IndentGuidesConfig::default(),
-            color_modes: false,
+            color_modes: true,
             soft_wrap: SoftWrap {
                 enable: Some(false),
                 ..SoftWrap::default()
@@ -1244,7 +1245,7 @@ impl Default for Config {
             trim_final_newlines: false,
             trim_trailing_whitespace: false,
             smart_tab: Some(SmartTabConfig::default()),
-            popup_border: PopupBorderConfig::None,
+            popup_border: PopupBorderConfig::All,
             indent_heuristic: IndentationHeuristic::default(),
             jump_label_alphabet: ('a'..='z').collect(),
             inline_diagnostics: InlineDiagnosticsConfig::default(),
