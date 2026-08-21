@@ -44,3 +44,9 @@ threadpool = { version = "1.0" }
 # `tree-house-bindings` instance `tree-house` itself depends on.
 tree-house-bindings = { version = "0.3", features = ["tree-sitter-language"] }
 tree-sitter-rust = "0.23"
+tree-sitter-toml-ng = "0.7"
+tree-sitter-json = "0.24"
+tree-sitter-javascript = "0.25"
+tree-sitter-typescript = "0.23"
+tree-sitter-bash = "0.25"
+tree-sitter-md = "0.5"

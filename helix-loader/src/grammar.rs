@@ -86,6 +86,13 @@ pub fn get_language(name: &str) -> Result<Option<Grammar>> {
 pub fn get_language(name: &str) -> Result<Option<Grammar>> {
     let grammar = match name {
         "rust" => Grammar::try_from(tree_sitter_rust::LANGUAGE)?,
+        "toml" => Grammar::try_from(tree_sitter_toml_ng::LANGUAGE)?,
+        "json" => Grammar::try_from(tree_sitter_json::LANGUAGE)?,
+        "javascript" => Grammar::try_from(tree_sitter_javascript::LANGUAGE)?,
+        "typescript" => Grammar::try_from(tree_sitter_typescript::LANGUAGE_TYPESCRIPT)?,
+        "bash" => Grammar::try_from(tree_sitter_bash::LANGUAGE)?,
+        "markdown" => Grammar::try_from(tree_sitter_md::LANGUAGE)?,
+        "markdown_inline" => Grammar::try_from(tree_sitter_md::INLINE_LANGUAGE)?,
         _ => return Ok(None),
     };
     Ok(Some(grammar))
@@ -782,20 +789,82 @@ pub fn load_runtime_file(language: &str, filename: &str) -> Result<String, std::
 // statically-linked grammar set (see `get_language`) are embedded at compile time instead.
 #[cfg(target_arch = "wasm32")]
 pub fn load_runtime_file(language: &str, filename: &str) -> Result<String, std::io::Error> {
-    let contents = match (language, filename) {
-        ("rust", "highlights.scm") => include_str!("../../runtime/queries/rust/highlights.scm"),
-        ("rust", "injections.scm") => include_str!("../../runtime/queries/rust/injections.scm"),
-        ("rust", "locals.scm") => include_str!("../../runtime/queries/rust/locals.scm"),
-        ("rust", "indents.scm") => include_str!("../../runtime/queries/rust/indents.scm"),
-        ("rust", "textobjects.scm") => include_str!("../../runtime/queries/rust/textobjects.scm"),
-        ("rust", "tags.scm") => include_str!("../../runtime/queries/rust/tags.scm"),
-        ("rust", "rainbows.scm") => include_str!("../../runtime/queries/rust/rainbows.scm"),
-        _ => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("no embedded query file for {language}/{filename}"),
-            ))
-        }
-    };
+    // `language` here is the query directory name (a `[[language]]`'s `name`, e.g.
+    // "markdown.inline" or an `; inherits:`-referenced pseudo-language like "_javascript"),
+    // not necessarily the `[[grammar]]` name `get_language` uses.
+    macro_rules! embedded {
+        ($(($lang:literal, $file:literal)),+ $(,)?) => {
+            match (language, filename) {
+                $(($lang, $file) => include_str!(concat!("../../runtime/queries/", $lang, "/", $file)),)+
+                _ => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("no embedded query file for {language}/{filename}"),
+                    ))
+                }
+            }
+        };
+    }
+
+    let contents = embedded![
+        ("rust", "highlights.scm"),
+        ("rust", "injections.scm"),
+        ("rust", "locals.scm"),
+        ("rust", "indents.scm"),
+        ("rust", "textobjects.scm"),
+        ("rust", "tags.scm"),
+        ("rust", "rainbows.scm"),
+        ("toml", "highlights.scm"),
+        ("toml", "indents.scm"),
+        ("toml", "injections.scm"),
+        ("toml", "rainbows.scm"),
+        ("toml", "tags.scm"),
+        ("toml", "textobjects.scm"),
+        ("json", "highlights.scm"),
+        ("json", "indents.scm"),
+        ("json", "injections.scm"),
+        ("json", "rainbows.scm"),
+        ("json", "textobjects.scm"),
+        ("javascript", "highlights.scm"),
+        ("javascript", "indents.scm"),
+        ("javascript", "injections.scm"),
+        ("javascript", "locals.scm"),
+        ("javascript", "rainbows.scm"),
+        ("javascript", "tags.scm"),
+        ("javascript", "textobjects.scm"),
+        ("typescript", "highlights.scm"),
+        ("typescript", "indents.scm"),
+        ("typescript", "injections.scm"),
+        ("typescript", "locals.scm"),
+        ("typescript", "rainbows.scm"),
+        ("typescript", "tags.scm"),
+        ("typescript", "textobjects.scm"),
+        ("ecma", "highlights.scm"),
+        ("ecma", "indents.scm"),
+        ("ecma", "injections.scm"),
+        ("ecma", "locals.scm"),
+        ("ecma", "rainbows.scm"),
+        ("ecma", "textobjects.scm"),
+        ("_javascript", "highlights.scm"),
+        ("_javascript", "locals.scm"),
+        ("_javascript", "tags.scm"),
+        ("_typescript", "highlights.scm"),
+        ("_typescript", "indents.scm"),
+        ("_typescript", "locals.scm"),
+        ("_typescript", "tags.scm"),
+        ("_typescript", "textobjects.scm"),
+        ("bash", "highlights.scm"),
+        ("bash", "indents.scm"),
+        ("bash", "injections.scm"),
+        ("bash", "locals.scm"),
+        ("bash", "rainbows.scm"),
+        ("bash", "tags.scm"),
+        ("bash", "textobjects.scm"),
+        ("markdown", "highlights.scm"),
+        ("markdown", "injections.scm"),
+        ("markdown", "tags.scm"),
+        ("markdown.inline", "highlights.scm"),
+        ("markdown.inline", "injections.scm"),
+    ];
     Ok(contents.to_string())
 }
