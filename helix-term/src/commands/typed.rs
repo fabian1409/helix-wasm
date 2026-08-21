@@ -110,6 +110,32 @@ fn force_exit(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> a
     quit(cx, Args::default(), event)
 }
 
+// No LSP in the browser build, so there's no auto-format/code-actions-on-save chain to
+// build - just the plain wasm `write_impl(path, force)` (see below) followed by `quit`.
+#[cfg(target_arch = "wasm32")]
+fn exit(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    if doc!(cx.editor).is_modified() {
+        write_impl(cx, args.first(), false)?;
+    }
+    quit(cx, Args::default(), event)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn force_exit(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    if doc!(cx.editor).is_modified() {
+        write_impl(cx, args.first(), true)?;
+    }
+    quit(cx, Args::default(), event)
+}
+
 fn quit(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyhow::Result<()> {
     log::debug!("quitting...");
 
@@ -670,6 +696,22 @@ fn write_buffer_close(
     buffer_close_by_ids_impl(cx, &document_ids, false)
 }
 
+#[cfg(target_arch = "wasm32")]
+fn write_buffer_close(
+    cx: &mut compositor::Context,
+    args: Args,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    write_impl(cx, args.first(), false)?;
+
+    let document_ids = buffer_gather_paths_impl(cx.editor, args);
+    buffer_close_by_ids_impl(cx, &document_ids, false)
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn force_write_buffer_close(
     cx: &mut compositor::Context,
@@ -689,6 +731,22 @@ fn force_write_buffer_close(
             code_actions: !args.has_flag(WRITE_NO_CODE_ACTIONS_FLAG.name),
         },
     )?;
+
+    let document_ids = buffer_gather_paths_impl(cx.editor, args);
+    buffer_close_by_ids_impl(cx, &document_ids, false)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn force_write_buffer_close(
+    cx: &mut compositor::Context,
+    args: Args,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    write_impl(cx, args.first(), true)?;
 
     let document_ids = buffer_gather_paths_impl(cx.editor, args);
     buffer_close_by_ids_impl(cx, &document_ids, false)
@@ -884,6 +942,16 @@ fn write_quit(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> a
     quit(cx, Args::default(), event)
 }
 
+#[cfg(target_arch = "wasm32")]
+fn write_quit(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    write_impl(cx, args.first(), false)?;
+    quit(cx, Args::default(), event)
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn force_write_quit(
     cx: &mut compositor::Context,
@@ -904,6 +972,20 @@ fn force_write_quit(
         },
     )?;
     cx.block_try_flush_writes()?;
+    force_quit(cx, Args::default(), event)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn force_write_quit(
+    cx: &mut compositor::Context,
+    args: Args,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    write_impl(cx, args.first(), true)?;
     force_quit(cx, Args::default(), event)
 }
 
@@ -1058,6 +1140,70 @@ pub fn write_all_impl(
     Ok(())
 }
 
+// No LSP in the browser build, so there's no auto-format/code-actions-on-save chain to
+// build for any of the saves - trim/save each modified document synchronously instead,
+// same as the plain wasm `write_impl` above. Takes `force`/`write_scratch` directly
+// rather than `WriteAllOptions`, since `auto_format`/`code_actions` can never apply here.
+#[cfg(target_arch = "wasm32")]
+pub fn write_all_impl(
+    cx: &mut compositor::Context,
+    force: bool,
+    write_scratch: bool,
+) -> anyhow::Result<()> {
+    let mut errors: Vec<&'static str> = Vec::new();
+    let config = cx.editor.config();
+    let saves: Vec<_> = cx
+        .editor
+        .documents
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>()
+        .into_iter()
+        .filter_map(|id| {
+            let doc = doc!(cx.editor, &id);
+            if !doc.is_modified() {
+                return None;
+            }
+            if doc.path().is_none() {
+                if write_scratch {
+                    errors.push("cannot write a buffer without a filename");
+                }
+                return None;
+            }
+
+            // Look for a view to apply the formatting change to.
+            let target_view = cx.editor.get_synced_view_id(doc.id());
+            Some((id, target_view))
+        })
+        .collect();
+
+    for (doc_id, target_view) in saves {
+        let doc = doc_mut!(cx.editor, &doc_id);
+        let view = view_mut!(cx.editor, target_view);
+
+        if doc.trim_trailing_whitespace() {
+            trim_trailing_whitespace(doc, target_view);
+        }
+        if config.trim_final_newlines {
+            trim_final_newlines(doc, target_view);
+        }
+        if doc.insert_final_newline() {
+            insert_final_newline(doc, target_view);
+        }
+
+        // Save an undo checkpoint for any outstanding changes.
+        doc.append_changes_to_history(view);
+
+        cx.editor.save_sync::<PathBuf>(doc_id, None, force)?;
+    }
+
+    if !errors.is_empty() && !force {
+        bail!("{:?}", errors);
+    }
+
+    Ok(())
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn write_all(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
@@ -1073,6 +1219,15 @@ fn write_all(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> an
             code_actions: !args.has_flag(WRITE_NO_CODE_ACTIONS_FLAG.name),
         },
     )
+}
+
+#[cfg(target_arch = "wasm32")]
+fn write_all(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    write_all_impl(cx, false, true)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1096,6 +1251,19 @@ fn force_write_all(
     )
 }
 
+#[cfg(target_arch = "wasm32")]
+fn force_write_all(
+    cx: &mut compositor::Context,
+    _args: Args,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    write_all_impl(cx, true, true)
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn write_all_quit(
     cx: &mut compositor::Context,
@@ -1117,6 +1285,19 @@ fn write_all_quit(
     quit_all_impl(cx, false)
 }
 
+#[cfg(target_arch = "wasm32")]
+fn write_all_quit(
+    cx: &mut compositor::Context,
+    _args: Args,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+    write_all_impl(cx, false, true)?;
+    quit_all_impl(cx, false)
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn force_write_all_quit(
     cx: &mut compositor::Context,
@@ -1135,6 +1316,19 @@ fn force_write_all_quit(
             code_actions: !args.has_flag(WRITE_NO_CODE_ACTIONS_FLAG.name),
         },
     );
+    quit_all_impl(cx, true)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn force_write_all_quit(
+    cx: &mut compositor::Context,
+    _args: Args,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+    let _ = write_all_impl(cx, true, true);
     quit_all_impl(cx, true)
 }
 
@@ -1794,6 +1988,21 @@ fn update(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyho
                 code_actions: !args.has_flag(WRITE_NO_CODE_ACTIONS_FLAG.name),
             },
         )
+    } else {
+        Ok(())
+    }
+}
+
+/// Update the [`Document`] if it has been modified.
+#[cfg(target_arch = "wasm32")]
+fn update(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    let (_view, doc) = current!(cx.editor);
+    if doc.is_modified() {
+        write_impl(cx, None, false)
     } else {
         Ok(())
     }
@@ -3128,7 +3337,6 @@ const WRITE_NO_CODE_ACTIONS_FLAG: Flag = Flag {
 };
 
 pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
-    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "exit",
         aliases: &["x", "xit"],
@@ -3141,7 +3349,6 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
-    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "exit!",
         aliases: &["x!", "xit!"],
@@ -3293,7 +3500,6 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
-    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "write-buffer-close",
         aliases: &["wbc"],
@@ -3306,7 +3512,6 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
-    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "write-buffer-close!",
         aliases: &["wbc!"],
@@ -3389,7 +3594,6 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
-    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "write-quit",
         aliases: &["wq"],
@@ -3402,7 +3606,6 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
-    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "write-quit!",
         aliases: &["wq!"],
@@ -3415,7 +3618,6 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
-    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "write-all",
         aliases: &["wa"],
@@ -3428,7 +3630,6 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
-    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "write-all!",
         aliases: &["wa!"],
@@ -3441,7 +3642,6 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
-    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "write-quit-all",
         aliases: &["wqa", "xa"],
@@ -3454,7 +3654,6 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
-    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "write-quit-all!",
         aliases: &["wqa!", "xa!"],
@@ -3753,7 +3952,6 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             ..Signature::DEFAULT
         },
     },
-    #[cfg(not(target_arch = "wasm32"))]
     TypableCommand {
         name: "update",
         aliases: &["u"],
