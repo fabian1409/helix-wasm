@@ -1338,6 +1338,15 @@ impl Document {
         Ok(())
     }
 
+    /// Encodes the buffer's contents the same way [`Self::save_sync`] would, for the wasm32
+    /// build's `:download` command to hand to the browser instead of writing to a file.
+    #[cfg(target_arch = "wasm32")]
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>, anyhow::Error> {
+        let mut buf = Vec::new();
+        to_writer_sync(&mut buf, (self.encoding, self.has_bom), self.text())?;
+        Ok(buf)
+    }
+
     /// Detect the programming language based on the file type.
     pub fn detect_language(&mut self, loader: &syntax::Loader) {
         self.set_language(self.detect_language_config(loader), loader);

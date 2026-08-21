@@ -672,6 +672,28 @@ fn force_write(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> 
     write_impl(cx, args.first(), true)
 }
 
+// Only buffers with a path (i.e. already written into the browser's in-memory filesystem)
+// can be downloaded - there's no meaningful filename to offer the browser otherwise.
+#[cfg(target_arch = "wasm32")]
+fn download(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    let doc = doc!(cx.editor);
+    let path = doc
+        .path()
+        .ok_or_else(|| anyhow::anyhow!("buffer has no filename, use :write <path> first"))?;
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .ok_or_else(|| anyhow::anyhow!("buffer path has no filename"))?;
+    let bytes = doc.encode_to_vec()?;
+
+    helix_view::download::queue_download(name, bytes);
+    Ok(())
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn write_buffer_close(
     cx: &mut compositor::Context,
@@ -3529,6 +3551,18 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         aliases: &["n"],
         doc: "Create a new scratch buffer.",
         fun: new_file,
+        completer: CommandCompleter::none(),
+        signature: Signature {
+            positionals: (0, Some(0)),
+            ..Signature::DEFAULT
+        },
+    },
+    #[cfg(target_arch = "wasm32")]
+    TypableCommand {
+        name: "download",
+        aliases: &[],
+        doc: "Download the current buffer as a file (browser build only).",
+        fun: download,
         completer: CommandCompleter::none(),
         signature: Signature {
             positionals: (0, Some(0)),

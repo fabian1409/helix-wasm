@@ -32,6 +32,10 @@ thread_local! {
     // Clipboard writes (`"+y` etc.) queued by `helix_view::clipboard` during `hx_key`, for
     // the JS host to hand to `navigator.clipboard.writeText` afterwards.
     static COPY_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::new());
+    // File bytes/name queued by `:download` during `hx_key`, for the JS host to save via a
+    // Blob + `<a download>` afterwards.
+    static DOWNLOAD_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::new());
+    static DOWNLOAD_NAME_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::new());
     // Scratch buffer the JS host writes clipboard text into (on a browser `paste` event)
     // before calling `hx_paste`; unlike KEY_BUF this is unbounded since pasted text has no
     // fixed max length, so it's grown to fit via `hx_paste_alloc` instead of a fixed array.
@@ -250,6 +254,11 @@ pub extern "C" fn hx_key(len: u32) {
     if let Some(text) = helix_view::clipboard::take_pending_copy() {
         COPY_BUF.with(|buf| *buf.borrow_mut() = text.into_bytes());
     }
+
+    if let Some((name, bytes)) = helix_view::download::take_pending_download() {
+        DOWNLOAD_NAME_BUF.with(|buf| *buf.borrow_mut() = name.into_bytes());
+        DOWNLOAD_BUF.with(|buf| *buf.borrow_mut() = bytes);
+    }
 }
 
 /// Grows the scratch buffer read by `hx_open_path` to `len` bytes and returns a pointer for
@@ -304,6 +313,35 @@ pub extern "C" fn hx_copy_ptr() -> *const u8 {
 #[no_mangle]
 pub extern "C" fn hx_copy_clear() {
     COPY_BUF.with(|buf| buf.borrow_mut().clear());
+}
+
+/// Non-zero if `:download` queued a file during the last `hx_key` call and is waiting to be
+/// saved via a Blob + `<a download>`; read it via `hx_download_ptr`/`hx_download_len` and
+/// `hx_download_name_ptr`/`hx_download_name_len`, then call `hx_download_clear`.
+#[no_mangle]
+pub extern "C" fn hx_download_len() -> usize {
+    DOWNLOAD_BUF.with(|buf| buf.borrow().len())
+}
+
+#[no_mangle]
+pub extern "C" fn hx_download_ptr() -> *const u8 {
+    DOWNLOAD_BUF.with(|buf| buf.borrow().as_ptr())
+}
+
+#[no_mangle]
+pub extern "C" fn hx_download_name_len() -> usize {
+    DOWNLOAD_NAME_BUF.with(|buf| buf.borrow().len())
+}
+
+#[no_mangle]
+pub extern "C" fn hx_download_name_ptr() -> *const u8 {
+    DOWNLOAD_NAME_BUF.with(|buf| buf.borrow().as_ptr())
+}
+
+#[no_mangle]
+pub extern "C" fn hx_download_clear() {
+    DOWNLOAD_BUF.with(|buf| buf.borrow_mut().clear());
+    DOWNLOAD_NAME_BUF.with(|buf| buf.borrow_mut().clear());
 }
 
 /// Grows the scratch buffer read by `hx_paste` to `len` bytes and returns a pointer for the

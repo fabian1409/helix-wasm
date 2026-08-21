@@ -124,6 +124,7 @@ function sendKey(exports, notation) {
   new Uint8Array(exports.memory.buffer, ptr, bytes.length).set(bytes);
   exports.hx_key(bytes.length);
   flushClipboardCopy(exports);
+  flushDownload(exports);
 }
 
 function flushClipboardCopy(exports) {
@@ -135,6 +136,26 @@ function flushClipboardCopy(exports) {
   navigator.clipboard.writeText(new TextDecoder().decode(bytes)).catch((err) => {
     console.error("helix-wasm: writing to the system clipboard failed:", err);
   });
+}
+
+// Saves a file queued by `:download` (see `hx_download_len` in helix-wasm/src/main.rs) by
+// building a Blob and clicking a throwaway `<a download>` link - the standard way to trigger
+// a browser "Save As" without a real server response.
+function flushDownload(exports) {
+  const len = exports.hx_download_len();
+  if (len === 0) return;
+  const bytes = new Uint8Array(exports.memory.buffer, exports.hx_download_ptr(), len).slice();
+  const nameLen = exports.hx_download_name_len();
+  const nameBytes = new Uint8Array(exports.memory.buffer, exports.hx_download_name_ptr(), nameLen).slice();
+  const name = new TextDecoder().decode(nameBytes);
+  exports.hx_download_clear();
+
+  const url = URL.createObjectURL(new Blob([bytes]));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // There's no synchronous "read the clipboard" browser API, so `"+p` can only ever paste

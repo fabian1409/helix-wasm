@@ -5,6 +5,8 @@ pub mod action;
 pub mod annotations;
 pub mod clipboard;
 pub mod document;
+#[cfg(target_arch = "wasm32")]
+pub mod download;
 pub mod editor;
 pub mod events;
 pub mod expansion;
