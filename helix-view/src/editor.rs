@@ -1584,9 +1584,9 @@ impl Editor {
     }
 
     /// Checks whether the idle timeout has elapsed and, if so, clears it (matching
-    /// `clear_idle_timer`) and reports that it fired. There's no async executor to drive a
-    /// real timer on wasm32 (see `idle_deadline`'s field doc) - this is polled manually
-    /// instead, from `Application::wasm_tick`.
+    /// `clear_idle_timer`) and reports that it fired. There's no reactor to drive a real
+    /// `tokio::time::Sleep` on wasm32 (see `idle_deadline`'s field doc) - this is polled
+    /// manually instead, from `Application::wasm_tick`.
     #[cfg(target_arch = "wasm32")]
     pub fn check_idle_timer(&mut self) -> bool {
         if Instant::now() < self.idle_deadline {
@@ -2375,9 +2375,9 @@ impl Editor {
         Ok(())
     }
 
-    /// Synchronous counterpart to `save` for the wasm32 build, which has no async executor to
-    /// drive `save`'s queued future (`wait_event`, the only thing that ever drains
-    /// `save_queue`, is itself native-only) - see `Document::save_sync`.
+    /// Synchronous counterpart to `save` for the wasm32 build: `wait_event`, the only thing
+    /// that ever drains `save_queue` and drives `save`'s queued future, is itself
+    /// native-only - see `Document::save_sync`.
     #[cfg(target_arch = "wasm32")]
     pub fn save_sync<P: Into<PathBuf>>(
         &mut self,

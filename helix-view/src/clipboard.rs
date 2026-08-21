@@ -38,8 +38,8 @@ pub use browser::{set_pasted_text, take_pending_copy, ClipboardProvider};
 
 // There's no synchronous "read the system clipboard" browser API (the async
 // `navigator.clipboard` API is permission-gated and can't be awaited from these
-// synchronous methods, since the wasm build has no async executor to drive it - see
-// helix-wasm/src/main.rs). Instead: the JS host listens for the browser's native `paste`
+// synchronous methods - there's no bridge from a JS `Promise` into a poll of a wasm-side
+// future). Instead: the JS host listens for the browser's native `paste`
 // event (Ctrl+V/Cmd+V), which hands over clipboard text synchronously via
 // `event.clipboardData`, and forwards it here via `set_pasted_text` - so `"+p` pastes
 // whatever was most recently delivered by an actual paste gesture. Writes go the other

@@ -39,9 +39,10 @@ pub trait AsyncHook: Sync + Send + 'static + Sized {
         let (tx, rx) = mpsc::channel(128);
         // wasm32-wasip1 has no `tokio::time` (the debounce timeout `run` waits on) or working
         // `tokio::spawn` to begin with - same as the "not inside a runtime" case below (which
-        // exists for unit tests), events sent into `tx` are just never picked up. Debounced
-        // hooks are all LSP-adjacent today so this isn't a regression in practice, but if that
-        // changes, this is the place a wasm32-appropriate driver would go.
+        // exists for unit tests), events sent into `tx` are just never picked up. This silently
+        // disables every debounced hook on wasm32, LSP-related or not (e.g. the picker's
+        // `PreviewHighlightHandler`) - this is the place a wasm32-appropriate driver, likely
+        // built on the JS-driven tick `Application::wasm_tick` already pumps, would go.
         #[cfg(not(target_arch = "wasm32"))]
         // only spawn worker if we are inside runtime to avoid having to spawn a runtime for unrelated unit tests
         if tokio::runtime::Handle::try_current().is_ok() {

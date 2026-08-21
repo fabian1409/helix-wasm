@@ -1412,10 +1412,10 @@ impl Application {
 
     /// Dispatches a single key event through the same compositor path
     /// `handle_terminal_events` uses for the generic (non-resize, non-CSI) case,
-    /// then synchronously renders if the event (or `wasm_tick`) changed anything. There's no
-    /// async executor in the wasm build, so `render()` (which never actually
-    /// awaits anything — it's only `async` to share code with the native event
-    /// loop) is driven to completion with a trivial single-poll executor.
+    /// then synchronously renders if the event (or `wasm_tick`) changed anything.
+    /// `render()` never actually awaits anything — it's only `async` to share code
+    /// with the native event loop — so a trivial single-poll executor is enough to
+    /// drive it to completion here, regardless of the job `LocalPool`.
     #[cfg(target_arch = "wasm32")]
     pub fn handle_key(&mut self, event: helix_view::input::KeyEvent) {
         let mut cx = crate::compositor::Context {

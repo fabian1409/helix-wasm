@@ -94,9 +94,9 @@ fn build_application(cols: u16, rows: u16) -> anyhow::Result<Application> {
     // Same embedded `languages.toml` native Helix uses, merged with any user/workspace
     // `languages.toml` dropped into the virtual filesystem (trust-gated, same as native) - so
     // file-type detection, comment tokens, indentation etc. all come along for free;
-    // `get_language` in helix-loader only actually has a grammar to hand back for "rust" (see
-    // helix-loader/src/grammar.rs), so every other configured language is otherwise inert
-    // here, same as native Helix when a grammar isn't built.
+    // `get_language` in helix-loader only has a fixed, statically-linked grammar set to hand
+    // back (see helix-loader/src/grammar.rs), so every other configured language is otherwise
+    // inert here, same as native Helix when a grammar isn't built.
     let lang_loader = helix_core::config::user_lang_loader(&workspace_trust).unwrap_or_else(|err| {
         eprintln!("helix-wasm: {err}, using default language config");
         helix_core::config::default_lang_loader()
