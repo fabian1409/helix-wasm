@@ -1752,6 +1752,26 @@ impl Editor {
         Ok(())
     }
 
+    /// moves/renames a path and calls `set_doc_path` if the file is open in the
+    /// editor - no LSP event handlers, since LSP isn't built into the wasm target.
+    #[cfg(target_arch = "wasm32")]
+    pub fn move_path(&mut self, old_path: &Path, new_path: &Path) -> io::Result<()> {
+        let new_path = canonicalize(new_path);
+        if old_path == new_path {
+            return Ok(());
+        }
+
+        if old_path.exists() {
+            fs::rename(old_path, &new_path)?;
+        }
+
+        if let Some(doc) = self.document_by_path(old_path) {
+            self.set_doc_path(doc.id(), &new_path);
+        }
+
+        Ok(())
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     pub fn create_path(&mut self, path: &Path, is_dir: bool) -> io::Result<()> {
         let path = canonicalize(path);
