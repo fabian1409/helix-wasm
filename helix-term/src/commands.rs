@@ -734,11 +734,11 @@ mod shell_command_stubs {
         shell_keep_pipe,
     );
 
-    // The file/directory picker, explorer, and `gf`/goto_file now work against the browser
-    // build's virtual filesystem (see `ui::file_picker`/`file_explorer`, `goto_file_impl`),
-    // but these three still need functionality this MVP doesn't have: workspace-wide grep
-    // (`global_search`) and git status (`changed_file_picker`); `syntax_workspace_symbol_picker`
-    // needs the same workspace-wide walk as `global_search`.
+    // The file/directory picker, explorer, `gf`/goto_file, global search, and workspace
+    // symbol picker now work against the browser build's virtual filesystem (see
+    // `ui::file_picker`/`file_explorer`, `goto_file_impl`, and `global_search`'s/
+    // `syntax_workspace_symbol_picker`'s serial wasm32 walk); `changed_file_picker` still
+    // needs git status, which this MVP doesn't have.
     fn unsupported_fs(cx: &mut Context) {
         cx.editor.set_error("this command requires filesystem access, unavailable in this build");
     }
@@ -749,11 +749,7 @@ mod shell_command_stubs {
         };
     }
 
-    fs_stub!(
-        syntax_workspace_symbol_picker,
-        global_search,
-        changed_file_picker,
-    );
+    fs_stub!(changed_file_picker);
 }
 #[cfg(target_arch = "wasm32")]
 use shell_command_stubs::*;
@@ -2724,7 +2720,6 @@ fn make_search_word_bounded(cx: &mut Context) {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn global_search(cx: &mut Context) {
     #[derive(Debug)]
     struct FileResult<'a> {
@@ -2813,7 +2808,9 @@ fn global_search(cx: &mut Context) {
                 .binary_detection(BinaryDetection::quit(b'\x00'))
                 .multi_line(true)
                 .build();
-            WalkBuilder::new(search_root)
+
+            let mut walk_builder = WalkBuilder::new(search_root);
+            walk_builder
                 .hidden(config.file_picker_config.hidden)
                 .parents(config.file_picker_config.parents)
                 .ignore(config.file_picker_config.ignore)
@@ -2826,69 +2823,93 @@ fn global_search(cx: &mut Context) {
                     filter_picker_entry(entry, &absolute_root, dedup_symlinks)
                 })
                 .add_custom_ignore_filename(helix_loader::config_dir().join("ignore"))
-                .add_custom_ignore_filename(".helix/ignore")
-                .build_parallel()
-                .run(|| {
-                    let mut searcher = searcher.clone();
-                    let matcher = matcher.clone();
-                    let injector = injector.clone();
-                    let documents = &documents;
-                    Box::new(move |entry: Result<DirEntry, ignore::Error>| -> WalkState {
-                        let entry = match entry {
-                            Ok(entry) => entry,
-                            Err(_) => return WalkState::Continue,
-                        };
+                .add_custom_ignore_filename(".helix/ignore");
 
-                        if !entry.path().is_file() {
-                            return WalkState::Continue;
-                        }
+            // Per-entry search logic shared between the native thread-pool walk and the
+            // wasm32 serial walk below (wasip1 has no threads for `build_parallel()` to
+            // hand its work off to).
+            let search_entry = |entry: Result<DirEntry, ignore::Error>,
+                                 searcher: &mut grep_searcher::Searcher,
+                                 matcher: &grep_regex::RegexMatcher,
+                                 injector: &ui::picker::Injector<_, _>,
+                                 documents: &[(Option<PathBuf>, Rope)]|
+             -> WalkState {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(_) => return WalkState::Continue,
+                };
 
-                        let mut stop = false;
-                        let sink = sinks::UTF8(|line_start, line_content| {
-                            let line_start = line_start as usize - 1;
-                            let line_end = line_start + line_content.lines().count() - 1;
-                            stop = injector
-                                .push(FileResult::new(entry.path(), line_start, line_end))
-                                .is_err();
+                if !entry.path().is_file() {
+                    return WalkState::Continue;
+                }
 
-                            Ok(!stop)
-                        });
-                        let doc = documents.iter().find(|&(doc_path, _)| {
-                            doc_path
-                                .as_ref()
-                                .is_some_and(|doc_path| doc_path == entry.path())
-                        });
+                let mut stop = false;
+                let sink = sinks::UTF8(|line_start, line_content| {
+                    let line_start = line_start as usize - 1;
+                    let line_end = line_start + line_content.lines().count() - 1;
+                    stop = injector
+                        .push(FileResult::new(entry.path(), line_start, line_end))
+                        .is_err();
 
-                        let result = if let Some((_, doc)) = doc {
-                            // there is already a buffer for this file
-                            // search the buffer instead of the file because it's faster
-                            // and captures new edits without requiring a save
-                            if searcher.multi_line_with_matcher(&matcher) {
-                                // in this case a continuous buffer is required
-                                // convert the rope to a string
-                                let text = doc.to_string();
-                                searcher.search_slice(&matcher, text.as_bytes(), sink)
-                            } else {
-                                searcher.search_reader(
-                                    &matcher,
-                                    RopeReader::new(doc.slice(..)),
-                                    sink,
-                                )
-                            }
-                        } else {
-                            searcher.search_path(&matcher, entry.path(), sink)
-                        };
-
-                        if let Err(err) = result {
-                            log::error!("Global search error: {}, {}", entry.path().display(), err);
-                        }
-                        if stop {
-                            WalkState::Quit
-                        } else {
-                            WalkState::Continue
-                        }
-                    })
+                    Ok(!stop)
                 });
+                let doc = documents.iter().find(|&(doc_path, _)| {
+                    doc_path
+                        .as_ref()
+                        .is_some_and(|doc_path| doc_path == entry.path())
+                });
+
+                let result = if let Some((_, doc)) = doc {
+                    // there is already a buffer for this file
+                    // search the buffer instead of the file because it's faster
+                    // and captures new edits without requiring a save
+                    if searcher.multi_line_with_matcher(matcher) {
+                        // in this case a continuous buffer is required
+                        // convert the rope to a string
+                        let text = doc.to_string();
+                        searcher.search_slice(matcher, text.as_bytes(), sink)
+                    } else {
+                        searcher.search_reader(matcher, RopeReader::new(doc.slice(..)), sink)
+                    }
+                } else {
+                    searcher.search_path(matcher, entry.path(), sink)
+                };
+
+                if let Err(err) = result {
+                    log::error!("Global search error: {}, {}", entry.path().display(), err);
+                }
+                if stop {
+                    WalkState::Quit
+                } else {
+                    WalkState::Continue
+                }
+            };
+
+            #[cfg(not(target_arch = "wasm32"))]
+            walk_builder.build_parallel().run(|| {
+                let mut searcher = searcher.clone();
+                let matcher = matcher.clone();
+                let injector = injector.clone();
+                let documents = &documents;
+                Box::new(move |entry: Result<DirEntry, ignore::Error>| -> WalkState {
+                    search_entry(entry, &mut searcher, &matcher, &injector, documents)
+                })
+            });
+
+            // No threads to run `build_parallel()` across on wasm32, so walk (and search)
+            // serially instead - the browser's virtual filesystem is small enough in
+            // practice that this is no different from native's fast path.
+            #[cfg(target_arch = "wasm32")]
+            {
+                let mut searcher = searcher.clone();
+                for entry in walk_builder.build() {
+                    let state = search_entry(entry, &mut searcher, &matcher, &injector, &documents);
+                    if state == WalkState::Quit {
+                        break;
+                    }
+                }
+            }
+
             Ok(())
         }
         .boxed()

@@ -219,7 +219,6 @@ pub fn syntax_symbol_picker(cx: &mut Context) {
     cx.push_layer(Box::new(overlaid(picker)));
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn syntax_workspace_symbol_picker(cx: &mut Context) {
     #[derive(Debug)]
     struct SearchState {
@@ -357,16 +356,14 @@ pub fn syntax_workspace_symbol_picker(cx: &mut Context) {
 
         async move {
             let searcher = state.searcher_builder.build();
-            state.walk_builder.build_parallel().run(|| {
-                let mut searcher = searcher.clone();
-                let matcher = matcher.clone();
-                let injector = injector.clone();
-                let loader = loader.clone();
-                let documents = &documents;
-                let pattern = pattern.clone();
-                let syntax_cache = &state.syntax_cache;
-                Box::new(move |entry: Result<DirEntry, ignore::Error>| -> WalkState {
-                    let entry = match entry {
+
+            // Per-entry search logic shared between the native thread-pool walk and the
+            // wasm32 serial walk below (wasip1 has no threads for `build_parallel()` to
+            // hand its work off to). Parameterized (rather than a closure) so both branches
+            // can feed it their own per-iteration clones/refs without fighting inference.
+            macro_rules! search_entry {
+                ($entry:expr, $searcher:expr, $matcher:expr, $injector:expr, $loader:expr, $documents:expr, $pattern:expr, $syntax_cache:expr) => {{
+                    let entry = match $entry {
                         Ok(entry) => entry,
                         Err(_) => return WalkState::Continue,
                     };
@@ -375,18 +372,18 @@ pub fn syntax_workspace_symbol_picker(cx: &mut Context) {
                     }
                     let path = entry.path();
                     // If this document is open, skip it because we've already processed it above.
-                    if documents.contains(path) {
+                    if $documents.contains(path) {
                         return WalkState::Continue;
                     };
                     let mut quit = false;
                     let sink = sinks::UTF8(|_line, _content| {
-                        if !syntax_cache.contains_key(path) {
+                        if !$syntax_cache.contains_key(path) {
                             // Read the file into a Rope and attempt to recognize the language
                             // and parse it with tree-sitter. Save the Rope and Syntax for future
                             // queries.
-                            syntax_cache.insert(path.to_path_buf(), syntax_for_path(path, &loader));
+                            $syntax_cache.insert(path.to_path_buf(), syntax_for_path(path, $loader));
                         };
-                        let entry = syntax_cache.get(path).unwrap();
+                        let entry = $syntax_cache.get(path).unwrap();
                         let Some((text, syntax)) = entry.value() else {
                             // If the file couldn't be parsed, move on.
                             return Ok(false);
@@ -394,12 +391,12 @@ pub fn syntax_workspace_symbol_picker(cx: &mut Context) {
                         let uri = Uri::from(path::normalize(path));
                         for tag in tags_iter(
                             syntax,
-                            &loader,
+                            $loader,
                             text.slice(..),
                             UriOrDocumentId::Uri(uri),
-                            Some(&pattern),
+                            Some($pattern),
                         ) {
-                            if injector.push(tag).is_err() {
+                            if $injector.push(tag).is_err() {
                                 quit = true;
                                 break;
                             }
@@ -410,7 +407,7 @@ pub fn syntax_workspace_symbol_picker(cx: &mut Context) {
                         // only important _if_ a file matches.
                         Ok(false)
                     });
-                    if let Err(err) = searcher.search_path(&matcher, path, sink) {
+                    if let Err(err) = $searcher.search_path($matcher, path, sink) {
                         log::info!("Workspace syntax search error: {}, {}", path.display(), err);
                     }
                     if quit {
@@ -418,8 +415,57 @@ pub fn syntax_workspace_symbol_picker(cx: &mut Context) {
                     } else {
                         WalkState::Continue
                     }
+                }};
+            }
+
+            #[cfg(not(target_arch = "wasm32"))]
+            state.walk_builder.build_parallel().run(|| {
+                let mut searcher = searcher.clone();
+                let matcher = matcher.clone();
+                let injector = injector.clone();
+                let loader = loader.clone();
+                let documents = &documents;
+                let pattern = pattern.clone();
+                let syntax_cache = &state.syntax_cache;
+                Box::new(move |entry: Result<DirEntry, ignore::Error>| -> WalkState {
+                    search_entry!(
+                        entry,
+                        &mut searcher,
+                        &matcher,
+                        &injector,
+                        &loader,
+                        documents,
+                        &pattern,
+                        syntax_cache
+                    )
                 })
             });
+
+            // No threads to run `build_parallel()` across on wasm32, so walk (and search)
+            // serially instead - the browser's virtual filesystem is small enough in
+            // practice that this is no different from native's fast path.
+            #[cfg(target_arch = "wasm32")]
+            {
+                let mut searcher = searcher.clone();
+                for entry in state.walk_builder.build() {
+                    let result = (|| -> WalkState {
+                        search_entry!(
+                            entry,
+                            &mut searcher,
+                            &matcher,
+                            &injector,
+                            &loader,
+                            &documents,
+                            &pattern,
+                            &state.syntax_cache
+                        )
+                    })();
+                    if result == WalkState::Quit {
+                        break;
+                    }
+                }
+            }
+
             Ok(())
         }
         .boxed()
