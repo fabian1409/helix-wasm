@@ -108,13 +108,6 @@ fn build_application(cols: u16, rows: u16) -> anyhow::Result<Application> {
     let mut app = Application::new(Args::default(), config, lang_loader, workspace_trust)?;
     app.resize(cols, rows);
 
-    // There's no file path in the browser for language auto-detection to key off of, so
-    // explicitly set the language on the single empty buffer `Application::new` creates.
-    let loader = app.editor.syn_loader.load();
-    if let Some(doc) = app.editor.documents_mut().next() {
-        doc.set_language_by_language_id("rust", &loader)?;
-    }
-
     Ok(app)
 }
 
