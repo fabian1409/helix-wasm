@@ -72,7 +72,7 @@ fn build_application(cols: u16, rows: u16) -> anyhow::Result<Application> {
     // Reads+merges global/workspace `config.toml` the same way native Helix's `main` does -
     // now that `/` is a real (JS-preopened) WASI directory instead of resolving to nothing, a
     // dropped-in config.toml takes effect here with no further wiring.
-    let config = match Config::load_default() {
+    let mut config = match Config::load_default() {
         Ok(config) => config,
         Err(ConfigLoadError::Error(err)) if err.kind() == std::io::ErrorKind::NotFound => {
             Config::default()
@@ -83,6 +83,11 @@ fn build_application(cols: u16, rows: u16) -> anyhow::Result<Application> {
             Config::default()
         }
     };
+    // No dropped-in config.toml sets a theme - use the embedded custom (onedark-based) theme
+    // instead of native Helix's own default theme.
+    config
+        .theme
+        .get_or_insert_with(|| helix_view::theme::Config::Constant("custom".into()));
 
     let workspace_trust = WorkspaceTrust::new((&config.editor.workspace_trust).into());
 

@@ -25,6 +25,11 @@ pub static BASE16_DEFAULT_THEME_DATA: Lazy<Value> = Lazy::new(|| {
     toml::from_str(str::from_utf8(bytes).unwrap()).expect("Failed to parse base 16 default theme")
 });
 
+pub static CUSTOM_THEME_DATA: Lazy<Value> = Lazy::new(|| {
+    let bytes = include_bytes!("../../runtime/themes/custom.toml");
+    toml::from_str(str::from_utf8(bytes).unwrap()).expect("Failed to parse custom theme")
+});
+
 pub static DEFAULT_THEME: Lazy<Theme> = Lazy::new(|| Theme {
     name: "default".into(),
     ..Theme::from(DEFAULT_THEME_DATA.clone())
@@ -33,6 +38,11 @@ pub static DEFAULT_THEME: Lazy<Theme> = Lazy::new(|| Theme {
 pub static BASE16_DEFAULT_THEME: Lazy<Theme> = Lazy::new(|| Theme {
     name: "base16_default".into(),
     ..Theme::from(BASE16_DEFAULT_THEME_DATA.clone())
+});
+
+pub static CUSTOM_THEME: Lazy<Theme> = Lazy::new(|| Theme {
+    name: "custom".into(),
+    ..Theme::from(CUSTOM_THEME_DATA.clone())
 });
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -120,6 +130,9 @@ impl Loader {
         if name == "base16_default" {
             return Ok((self.base16_default(), Vec::new()));
         }
+        if name == "custom" {
+            return Ok((self.custom(), Vec::new()));
+        }
 
         let mut visited_paths = HashSet::new();
         let (theme, warnings) = self
@@ -158,6 +171,7 @@ impl Loader {
                 // load default themes's toml from const.
                 "default" => DEFAULT_THEME_DATA.clone(),
                 "base16_default" => BASE16_DEFAULT_THEME_DATA.clone(),
+                "custom" => CUSTOM_THEME_DATA.clone(),
                 _ => self.load_theme(parent_theme_name, visited_paths)?,
             };
 
@@ -265,6 +279,11 @@ impl Loader {
     /// Returns the alternative 16-color default theme
     pub fn base16_default(&self) -> Theme {
         BASE16_DEFAULT_THEME.clone()
+    }
+
+    /// Returns the custom (onedark-based) theme
+    pub fn custom(&self) -> Theme {
+        CUSTOM_THEME.clone()
     }
 }
 
