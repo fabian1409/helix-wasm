@@ -3,6 +3,7 @@ helix-wasm/www/helix_wasm.wasm
 helix-wasm/www/logo.svg
 helix-wasm/www/runtime.tar.gz
 wasi-sdk
+binaryen
 .direnv
 helix-term/rustfmt.toml
 result

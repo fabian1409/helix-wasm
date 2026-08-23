@@ -586,6 +586,55 @@ pub mod tasks {
         Ok(())
     }
 
+    /// Pinned binaryen release: https://github.com/WebAssembly/binaryen/releases
+    const BINARYEN_VERSION: &str = "123";
+
+    /// Downloads and extracts the pinned binaryen release into `binaryen/`, giving `cargo
+    /// xtask wasm` a `wasm-opt` to shrink the built binary beyond what rustc/LLVM's own
+    /// `opt-level = "z"` does - every byte here ships over the network.
+    pub fn binaryen_install() -> Result<(), DynError> {
+        use std::process::Command;
+
+        let dir = crate::path::binaryen();
+        if dir.join("bin/wasm-opt").is_file() {
+            println!("binaryen already installed at {}", dir.display());
+            return Ok(());
+        }
+        std::fs::create_dir_all(&dir)?;
+
+        let asset = format!("binaryen-version_{BINARYEN_VERSION}-x86_64-linux.tar.gz");
+        let url = format!(
+            "https://github.com/WebAssembly/binaryen/releases/download/version_{BINARYEN_VERSION}/{asset}"
+        );
+        let archive = dir.join(&asset);
+
+        let status = Command::new("curl")
+            .args(["--fail", "--location", "--silent", "--show-error", "-o"])
+            .arg(&archive)
+            .arg(&url)
+            .status()?;
+        if !status.success() {
+            return Err(format!("failed to download {url}").into());
+        }
+
+        let status = Command::new("tar")
+            .arg("xzf")
+            .arg(&archive)
+            .args(["--strip-components=1", "-C"])
+            .arg(&dir)
+            .status()?;
+        std::fs::remove_file(&archive).ok();
+        if !status.success() {
+            return Err(format!("failed to extract {}", archive.display()).into());
+        }
+
+        println!(
+            "Installed binaryen version_{BINARYEN_VERSION} into {}. `cargo xtask wasm` will use it automatically.",
+            dir.display()
+        );
+        Ok(())
+    }
+
     pub fn wasm() -> Result<(), DynError> {
         use std::process::Command;
 
@@ -628,15 +677,59 @@ pub mod tasks {
         // alongside them; both are build artifacts (.gitignore'd), not checked in.
         let root = crate::path::project_root();
         let www = root.join("helix-wasm/www");
+        let wasm_out = www.join("helix_wasm.wasm");
         std::fs::copy(
             root.join("target/wasm32-wasip1/wasm/helix_wasm.wasm"),
-            www.join("helix_wasm.wasm"),
+            &wasm_out,
         )?;
+        optimize_wasm(&wasm_out)?;
         std::fs::copy(root.join("logo.svg"), www.join("logo.svg"))?;
 
         build_runtime_archive(&root, &www)?;
 
         println!("Built helix-wasm for wasm32-wasip1 — serve helix-wasm/www/ directly.");
+        Ok(())
+    }
+
+    // Shrinks the just-built binary beyond what rustc/LLVM's own `opt-level = "z"` does -
+    // every byte here ships over the network (a real ~20% cut in testing). `--all-features`
+    // just tells wasm-opt which instruction encodings it's allowed to use while optimizing
+    // (rustc's wasm32-wasip1 codegen already emits bulk-memory/sign-ext/nontrapping-float-to-
+    // int); it doesn't change the binary's semantics. Best-effort: falls back to the
+    // unoptimized build (with a warning) if wasm-opt isn't available, since this is a size
+    // optimization, not a correctness requirement.
+    fn optimize_wasm(wasm_path: &std::path::Path) -> Result<(), DynError> {
+        use std::process::Command;
+
+        let pinned = crate::path::binaryen().join("bin/wasm-opt");
+        let wasm_opt: std::path::PathBuf = if pinned.is_file() {
+            pinned
+        } else if helix_stdx::env::which("wasm-opt").is_ok() {
+            "wasm-opt".into()
+        } else {
+            println!(
+                "wasm-opt not found (run `cargo xtask binaryen-install`) - skipping size optimization"
+            );
+            return Ok(());
+        };
+
+        let before = std::fs::metadata(wasm_path)?.len();
+        let optimized = wasm_path.with_extension("opt.wasm");
+        let status = Command::new(&wasm_opt)
+            .args(["-Oz", "--all-features", "--strip-debug", "-o"])
+            .arg(&optimized)
+            .arg(wasm_path)
+            .status()?;
+        if !status.success() {
+            std::fs::remove_file(&optimized).ok();
+            return Err("wasm-opt failed".into());
+        }
+        std::fs::rename(&optimized, wasm_path)?;
+        let after = std::fs::metadata(wasm_path)?.len();
+        println!(
+            "wasm-opt: {before} -> {after} bytes ({:.0}% smaller)",
+            (1.0 - after as f64 / before as f64) * 100.0
+        );
         Ok(())
     }
 
@@ -709,10 +802,14 @@ Usage: Run with `cargo xtask <task>`, eg. `cargo xtask docgen`.
         theme-check [themes]       Check that the theme files in runtime/themes/ are valid for the
                                    given themes, or all themes if none are specified.
         wasi-sdk-install           Download and extract the pinned wasi-sdk release into wasi-sdk/.
+        binaryen-install           Download and extract the pinned binaryen release (for `wasm-opt`)
+                                   into binaryen/.
         wasm                       Build helix-wasm for wasm32-wasip1 with the size-optimized `wasm`
                                    profile (using wasi-sdk/ automatically, falling back to PATH if
-                                   wasi-sdk/ isn't installed) and drop the binary into helix-wasm/www/,
-                                   which is then servable as-is.
+                                   wasi-sdk/ isn't installed), run wasm-opt on it (using binaryen/
+                                   automatically, falling back to PATH, skipped if neither is found),
+                                   and drop the binary into helix-wasm/www/, which is then servable
+                                   as-is.
 "
         );
     }
@@ -730,6 +827,7 @@ fn main() -> Result<(), DynError> {
             "highlight-check" => tasks::highlightcheck(args)?,
             "theme-check" => tasks::themecheck(args)?,
             "wasi-sdk-install" => tasks::wasi_sdk_install()?,
+            "binaryen-install" => tasks::binaryen_install()?,
             "wasm" => tasks::wasm()?,
             invalid => return Err(format!("Invalid task name: {}", invalid).into()),
         },
