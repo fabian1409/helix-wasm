@@ -5,8 +5,6 @@ pub mod action;
 pub mod annotations;
 pub mod clipboard;
 pub mod document;
-#[cfg(target_arch = "wasm32")]
-pub mod download;
 pub mod editor;
 pub mod events;
 pub mod expansion;
@@ -16,11 +14,12 @@ pub mod handlers;
 pub mod info;
 pub mod input;
 pub mod keyboard;
-pub mod open_url;
 pub mod register;
 pub mod theme;
 pub mod tree;
 pub mod view;
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;
 
 use std::num::NonZeroUsize;
 

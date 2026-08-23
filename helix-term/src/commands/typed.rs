@@ -690,7 +690,7 @@ fn download(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> an
         .ok_or_else(|| anyhow::anyhow!("buffer path has no filename"))?;
     let bytes = doc.encode_to_vec()?;
 
-    helix_view::download::queue_download(name, bytes);
+    helix_view::wasm::download::queue_download(name, bytes);
     Ok(())
 }
 

@@ -1676,7 +1676,7 @@ fn open_url(cx: &mut Context, url: Url, action: Action) {
         // through the same path native does.
         #[cfg(target_arch = "wasm32")]
         {
-            helix_view::open_url::queue_open_url(url.to_string());
+            helix_view::wasm::open_url::queue_open_url(url.to_string());
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]

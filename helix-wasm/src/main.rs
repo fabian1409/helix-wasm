@@ -251,12 +251,12 @@ pub extern "C" fn hx_key(len: u32) {
         COPY_BUF.with(|buf| *buf.borrow_mut() = text.into_bytes());
     }
 
-    if let Some((name, bytes)) = helix_view::download::take_pending_download() {
+    if let Some((name, bytes)) = helix_view::wasm::download::take_pending_download() {
         DOWNLOAD_NAME_BUF.with(|buf| *buf.borrow_mut() = name.into_bytes());
         DOWNLOAD_BUF.with(|buf| *buf.borrow_mut() = bytes);
     }
 
-    if let Some(url) = helix_view::open_url::take_pending_open_url() {
+    if let Some(url) = helix_view::wasm::open_url::take_pending_open_url() {
         OPEN_URL_BUF.with(|buf| *buf.borrow_mut() = url.into_bytes());
     }
 }

@@ -1,8 +1,7 @@
 //! Lets the wasm32 build's `open_url` (`gf` on a URL, etc.) hand an external URL to
 //! helix-wasm's FFI layer, which forwards it to the JS host to open via `window.open`.
-//! Mirrors the pending-download queue in [`crate::download`] - queued here and picked up by
+//! Mirrors the pending-download queue in [`super::download`] - queued here and picked up by
 //! `hx_key` after the triggering key event returns.
-#![cfg(target_arch = "wasm32")]
 
 use std::cell::RefCell;
 

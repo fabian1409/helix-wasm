@@ -1,9 +1,8 @@
 //! Lets the wasm32 build's `:download` command hand file bytes to helix-wasm's FFI layer,
 //! which forwards them to the JS host to save as a browser download. Mirrors the pending-copy
-//! queue in [`crate::clipboard`] - there's no synchronous way to trigger a browser download
+//! queue in [`super::clipboard`] - there's no synchronous way to trigger a browser download
 //! from inside a command, so the bytes are queued here and picked up by `hx_key` after the
 //! triggering key event returns.
-#![cfg(target_arch = "wasm32")]
 
 use std::cell::RefCell;
 
