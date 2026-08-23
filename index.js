@@ -125,6 +125,7 @@ function sendKey(exports, notation) {
   exports.hx_key(bytes.length);
   flushClipboardCopy(exports);
   flushDownload(exports);
+  flushOpenUrl(exports);
 }
 
 function flushClipboardCopy(exports) {
@@ -156,6 +157,17 @@ function flushDownload(exports) {
   a.download = name;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// Opens a URL queued by `gf` on a link (see `hx_open_url_len` in helix-wasm/src/main.rs) in a
+// new tab. `noopener,noreferrer` keeps the opened page from reaching back into this one via
+// `window.opener`.
+function flushOpenUrl(exports) {
+  const len = exports.hx_open_url_len();
+  if (len === 0) return;
+  const bytes = new Uint8Array(exports.memory.buffer, exports.hx_open_url_ptr(), len).slice();
+  exports.hx_open_url_clear();
+  window.open(new TextDecoder().decode(bytes), "_blank", "noopener,noreferrer");
 }
 
 // There's no synchronous "read the clipboard" browser API, so `"+p` can only ever paste
@@ -253,8 +265,59 @@ async function handleDrop(exports, rootDir, e) {
   }
 }
 
+// Reads a USTAR archive (as built by `tar::Builder` in xtask/src/main.rs's
+// `build_runtime_archive` - plain files only, no directory entries, no GNU/pax long-name
+// extensions) into a flat list of [name, bytes] pairs. Every name here is well under the
+// 100-byte name field, so the "ustar" prefix field is never needed.
+function parseTar(bytes) {
+  const decoder = new TextDecoder();
+  const files = [];
+  let offset = 0;
+  while (offset + 512 <= bytes.length) {
+    const header = bytes.subarray(offset, offset + 512);
+    // Two consecutive zeroed blocks mark the end of the archive.
+    if (header.every((b) => b === 0)) break;
+    offset += 512;
+
+    const name = decoder.decode(header.subarray(0, 100)).replace(/\0.*$/s, "");
+    const size = parseInt(decoder.decode(header.subarray(124, 136)).replace(/\0.*$/s, "").trim() || "0", 8);
+    const typeflag = header[156];
+    // "0" (0x30) is a regular file; some writers leave this byte 0 for the same thing.
+    if (name && (typeflag === 0x30 || typeflag === 0)) {
+      files.push([name, bytes.slice(offset, offset + size)]);
+    }
+    offset += Math.ceil(size / 512) * 512;
+  }
+  return files;
+}
+
+// Seeds the query files and themes `cargo xtask wasm` packs into `www/runtime.tar.gz` (see
+// xtask/src/main.rs's `build_runtime_archive`) into the virtual fs at `.config/runtime`,
+// matching `helix_loader::config_dir()` on wasm32 - so `helix_loader::grammar::
+// load_runtime_file` and the theme `Loader` find them exactly like a real `runtime/` dir
+// would. Fetched as one gzip stream (rather than one request per file) and decompressed with
+// the browser's native `DecompressionStream`, since it's a couple hundred small text files.
+// Best-effort: a failure here shouldn't block startup, since syntax highlighting/themes are
+// enhancements, not requirements, for opening a buffer.
+async function seedRuntimeFiles(rootDir) {
+  let bytes;
+  try {
+    const response = await fetch("./runtime.tar.gz");
+    const decompressed = response.body.pipeThrough(new DecompressionStream("gzip"));
+    bytes = new Uint8Array(await new Response(decompressed).arrayBuffer());
+  } catch (err) {
+    console.error("helix-wasm: failed to fetch/decompress runtime.tar.gz:", err);
+    return;
+  }
+
+  for (const [name, fileBytes] of parseTar(bytes)) {
+    insertFile(rootDir, `.config/runtime/${name}`, fileBytes);
+  }
+}
+
 async function main() {
   const { exports, rootDir } = await loadHelixWasm();
+  await seedRuntimeFiles(rootDir);
 
   const canvas = document.getElementById("screen");
   const ctx = canvas.getContext("2d");
