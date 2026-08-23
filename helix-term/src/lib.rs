@@ -135,18 +135,6 @@ fn open_external_url_callback(
     }
 }
 
-/// No process spawning in a browser — opening an external program isn't possible.
-#[cfg(target_arch = "wasm32")]
-fn open_external_url_callback(
-    _url: Url,
-) -> impl Future<Output = Result<job::Callback, anyhow::Error>> + Send + 'static {
-    async {
-        Ok(job::Callback::Editor(Box::new(move |editor| {
-            editor.set_error("Opening external URLs is not supported")
-        })))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::is_binary;

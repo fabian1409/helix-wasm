@@ -1671,12 +1671,12 @@ fn open_url(cx: &mut Context, url: Url, action: Action) {
 
     if should_open_url_externally(&url) {
         // No jobs-draining loop exists on wasm32 (see `Application::handle_key`) for a
-        // queued `cx.jobs.callback` to ever actually run, so report this synchronously
-        // instead of going through the same path native does.
+        // queued `cx.jobs.callback` to ever actually run, so queue the URL directly for
+        // helix-wasm's FFI layer to hand to the JS host (`window.open`) instead of going
+        // through the same path native does.
         #[cfg(target_arch = "wasm32")]
         {
-            cx.editor
-                .set_error("Opening external URLs is not supported");
+            helix_view::open_url::queue_open_url(url.to_string());
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]

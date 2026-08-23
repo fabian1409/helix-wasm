@@ -125,6 +125,7 @@ function sendKey(exports, notation) {
   exports.hx_key(bytes.length);
   flushClipboardCopy(exports);
   flushDownload(exports);
+  flushOpenUrl(exports);
 }
 
 function flushClipboardCopy(exports) {
@@ -156,6 +157,17 @@ function flushDownload(exports) {
   a.download = name;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// Opens a URL queued by `gf` on a link (see `hx_open_url_len` in helix-wasm/src/main.rs) in a
+// new tab. `noopener,noreferrer` keeps the opened page from reaching back into this one via
+// `window.opener`.
+function flushOpenUrl(exports) {
+  const len = exports.hx_open_url_len();
+  if (len === 0) return;
+  const bytes = new Uint8Array(exports.memory.buffer, exports.hx_open_url_ptr(), len).slice();
+  exports.hx_open_url_clear();
+  window.open(new TextDecoder().decode(bytes), "_blank", "noopener,noreferrer");
 }
 
 // There's no synchronous "read the clipboard" browser API, so `"+p` can only ever paste

@@ -16,6 +16,7 @@ pub mod handlers;
 pub mod info;
 pub mod input;
 pub mod keyboard;
+pub mod open_url;
 pub mod register;
 pub mod theme;
 pub mod tree;

@@ -36,6 +36,9 @@ thread_local! {
     // Blob + `<a download>` afterwards.
     static DOWNLOAD_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::new());
     static DOWNLOAD_NAME_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::new());
+    // External URL (e.g. `gf` on a link) queued during `hx_key`, for the JS host to open via
+    // `window.open`.
+    static OPEN_URL_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::new());
     // Scratch buffer the JS host writes clipboard text into (on a browser `paste` event)
     // before calling `hx_paste`; unlike KEY_BUF this is unbounded since pasted text has no
     // fixed max length, so it's grown to fit via `hx_paste_alloc` instead of a fixed array.
@@ -252,6 +255,10 @@ pub extern "C" fn hx_key(len: u32) {
         DOWNLOAD_NAME_BUF.with(|buf| *buf.borrow_mut() = name.into_bytes());
         DOWNLOAD_BUF.with(|buf| *buf.borrow_mut() = bytes);
     }
+
+    if let Some(url) = helix_view::open_url::take_pending_open_url() {
+        OPEN_URL_BUF.with(|buf| *buf.borrow_mut() = url.into_bytes());
+    }
 }
 
 /// Grows the scratch buffer read by `hx_open_path` to `len` bytes and returns a pointer for
@@ -335,6 +342,24 @@ pub extern "C" fn hx_download_name_ptr() -> *const u8 {
 pub extern "C" fn hx_download_clear() {
     DOWNLOAD_BUF.with(|buf| buf.borrow_mut().clear());
     DOWNLOAD_NAME_BUF.with(|buf| buf.borrow_mut().clear());
+}
+
+/// Non-zero if `gf` (or similar) queued an external URL during the last `hx_key` call and is
+/// waiting to be opened via `window.open`; read it via `hx_open_url_ptr`/`hx_open_url_len`,
+/// then call `hx_open_url_clear`.
+#[no_mangle]
+pub extern "C" fn hx_open_url_len() -> usize {
+    OPEN_URL_BUF.with(|buf| buf.borrow().len())
+}
+
+#[no_mangle]
+pub extern "C" fn hx_open_url_ptr() -> *const u8 {
+    OPEN_URL_BUF.with(|buf| buf.borrow().as_ptr())
+}
+
+#[no_mangle]
+pub extern "C" fn hx_open_url_clear() {
+    OPEN_URL_BUF.with(|buf| buf.borrow_mut().clear());
 }
 
 /// Grows the scratch buffer read by `hx_paste` to `len` bytes and returns a pointer for the
