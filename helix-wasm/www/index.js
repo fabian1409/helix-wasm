@@ -104,7 +104,16 @@ async function loadHelixWasm() {
     { debug: false },
   );
 
-  const { instance } = await WebAssembly.instantiateStreaming(fetch("./helix_wasm.wasm"), {
+  // Shipped pre-gzipped (see xtask/src/main.rs's `gzip_file`) since GitHub Pages doesn't
+  // reliably apply Content-Encoding to .wasm/binary responses on its own; decompress with the
+  // browser's native DecompressionStream and re-wrap the result as a Response (with the
+  // Content-Type instantiateStreaming requires) so compilation still streams as bytes arrive
+  // instead of waiting on a fully-buffered ArrayBuffer.
+  const response = await fetch("./helix_wasm.wasm.gz");
+  const decompressed = response.body.pipeThrough(new DecompressionStream("gzip"));
+  const wasmResponse = new Response(decompressed, { headers: { "Content-Type": "application/wasm" } });
+
+  const { instance } = await WebAssembly.instantiateStreaming(wasmResponse, {
     wasi_snapshot_preview1: wasi.wasiImport,
   });
 

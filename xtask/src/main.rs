@@ -683,6 +683,7 @@ pub mod tasks {
             &wasm_out,
         )?;
         optimize_wasm(&wasm_out)?;
+        gzip_file(&wasm_out)?;
         std::fs::copy(root.join("logo.svg"), www.join("logo.svg"))?;
 
         build_runtime_archive(&root, &www)?;
@@ -730,6 +731,23 @@ pub mod tasks {
             "wasm-opt: {before} -> {after} bytes ({:.0}% smaller)",
             (1.0 - after as f64 / before as f64) * 100.0
         );
+        Ok(())
+    }
+
+    // GitHub Pages (this project's target host) doesn't reliably apply `Content-Encoding` to
+    // `.wasm`/binary responses on the fly - see the long-standing open feature request for
+    // nginx-`gzip_static`-style precompressed-file support (github/isaacs#611) - so ship the
+    // binary pre-gzipped and let `index.js` decompress it client-side instead (same approach
+    // as `runtime.tar.gz`), replacing `path` with `path.gz`.
+    fn gzip_file(path: &std::path::Path) -> Result<(), DynError> {
+        let mut input = std::fs::File::open(path)?;
+        let gz_path = std::path::PathBuf::from(format!("{}.gz", path.display()));
+        let output = std::fs::File::create(&gz_path)?;
+        let mut encoder = flate2::write::GzEncoder::new(output, flate2::Compression::best());
+        std::io::copy(&mut input, &mut encoder)?;
+        encoder.finish()?;
+        drop(input);
+        std::fs::remove_file(path)?;
         Ok(())
     }
 

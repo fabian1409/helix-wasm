@@ -36,8 +36,14 @@ cargo xtask wasm               # builds helix-wasm, copies the .wasm into helix-
 the network, so this optimizes for size over speed. It then runs the built binary through
 `wasm-opt -Oz` (using `binaryen/` if installed, falling back to `wasm-opt` on `PATH`, skipped
 with a warning if neither is found) for a further ~20% cut beyond what rustc/LLVM's own
-`opt-level = "z"` gets alone. `helix-wasm/www/` is both the source for the hand-written JS/HTML
-and the directory you serve as-is; there's no separate assembled `dist/`.
+`opt-level = "z"` gets alone, and finally gzips it to `helix_wasm.wasm.gz` (another ~70% on top)
+since this project is served from GitHub Pages, which doesn't reliably apply `Content-Encoding`
+to `.wasm`/binary responses on its own (see the long-standing open feature request for
+nginx-`gzip_static`-style precompressed-file support, github/isaacs#611) — `index.js`'s
+`loadHelixWasm` decompresses it client-side with `DecompressionStream("gzip")`, re-wrapped as a
+`Response` so `WebAssembly.instantiateStreaming` still compiles as bytes arrive rather than
+waiting on a fully-buffered `ArrayBuffer`. `helix-wasm/www/` is both the source for the
+hand-written JS/HTML and the directory you serve as-is; there's no separate assembled `dist/`.
 
 ## The C-ABI boundary
 

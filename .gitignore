@@ -1,5 +1,5 @@
 target
-helix-wasm/www/helix_wasm.wasm
+helix-wasm/www/helix_wasm.wasm.gz
 helix-wasm/www/logo.svg
 helix-wasm/www/runtime.tar.gz
 wasi-sdk
