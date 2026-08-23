@@ -779,92 +779,12 @@ fn mtime(path: &Path) -> Result<SystemTime> {
 
 /// Gives the contents of a file from a language's `runtime/queries/<lang>`
 /// directory
-#[cfg(not(target_arch = "wasm32"))]
+///
+/// On wasm32 this reads from the virtual filesystem the same way native does - the JS host
+/// fetches and seeds `<config_dir>/runtime/queries/**` into it before `hx_init` runs (see
+/// `helix-wasm/www/index.js`), since there's nothing to `include_str!` a query file from at
+/// compile time for a language that isn't statically linked in (see `get_language`).
 pub fn load_runtime_file(language: &str, filename: &str) -> Result<String, std::io::Error> {
     let path = crate::runtime_file(PathBuf::new().join("queries").join(language).join(filename));
     std::fs::read_to_string(path)
-}
-
-// No filesystem to read `runtime/queries/` from in a browser, so query files for the
-// statically-linked grammar set (see `get_language`) are embedded at compile time instead.
-#[cfg(target_arch = "wasm32")]
-pub fn load_runtime_file(language: &str, filename: &str) -> Result<String, std::io::Error> {
-    // `language` here is the query directory name (a `[[language]]`'s `name`, e.g.
-    // "markdown.inline" or an `; inherits:`-referenced pseudo-language like "_javascript"),
-    // not necessarily the `[[grammar]]` name `get_language` uses.
-    macro_rules! embedded {
-        ($(($lang:literal, $file:literal)),+ $(,)?) => {
-            match (language, filename) {
-                $(($lang, $file) => include_str!(concat!("../../runtime/queries/", $lang, "/", $file)),)+
-                _ => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!("no embedded query file for {language}/{filename}"),
-                    ))
-                }
-            }
-        };
-    }
-
-    let contents = embedded![
-        ("rust", "highlights.scm"),
-        ("rust", "injections.scm"),
-        ("rust", "locals.scm"),
-        ("rust", "indents.scm"),
-        ("rust", "textobjects.scm"),
-        ("rust", "tags.scm"),
-        ("rust", "rainbows.scm"),
-        ("toml", "highlights.scm"),
-        ("toml", "indents.scm"),
-        ("toml", "injections.scm"),
-        ("toml", "rainbows.scm"),
-        ("toml", "tags.scm"),
-        ("toml", "textobjects.scm"),
-        ("json", "highlights.scm"),
-        ("json", "indents.scm"),
-        ("json", "injections.scm"),
-        ("json", "rainbows.scm"),
-        ("json", "textobjects.scm"),
-        ("javascript", "highlights.scm"),
-        ("javascript", "indents.scm"),
-        ("javascript", "injections.scm"),
-        ("javascript", "locals.scm"),
-        ("javascript", "rainbows.scm"),
-        ("javascript", "tags.scm"),
-        ("javascript", "textobjects.scm"),
-        ("typescript", "highlights.scm"),
-        ("typescript", "indents.scm"),
-        ("typescript", "injections.scm"),
-        ("typescript", "locals.scm"),
-        ("typescript", "rainbows.scm"),
-        ("typescript", "tags.scm"),
-        ("typescript", "textobjects.scm"),
-        ("ecma", "highlights.scm"),
-        ("ecma", "indents.scm"),
-        ("ecma", "injections.scm"),
-        ("ecma", "locals.scm"),
-        ("ecma", "rainbows.scm"),
-        ("ecma", "textobjects.scm"),
-        ("_javascript", "highlights.scm"),
-        ("_javascript", "locals.scm"),
-        ("_javascript", "tags.scm"),
-        ("_typescript", "highlights.scm"),
-        ("_typescript", "indents.scm"),
-        ("_typescript", "locals.scm"),
-        ("_typescript", "tags.scm"),
-        ("_typescript", "textobjects.scm"),
-        ("bash", "highlights.scm"),
-        ("bash", "indents.scm"),
-        ("bash", "injections.scm"),
-        ("bash", "locals.scm"),
-        ("bash", "rainbows.scm"),
-        ("bash", "tags.scm"),
-        ("bash", "textobjects.scm"),
-        ("markdown", "highlights.scm"),
-        ("markdown", "injections.scm"),
-        ("markdown", "tags.scm"),
-        ("markdown.inline", "highlights.scm"),
-        ("markdown.inline", "injections.scm"),
-    ];
-    Ok(contents.to_string())
 }

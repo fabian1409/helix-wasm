@@ -19,3 +19,5 @@ helix-loader = { path = "../helix-loader" }
 helix-stdx = { path = "../helix-stdx" }
 ropey.workspace = true
 toml.workspace = true
+flate2 = "1"
+tar = "0.4"

@@ -78,7 +78,8 @@ fn build_application(cols: u16, rows: u16) -> anyhow::Result<Application> {
 
     // Reads+merges global/workspace `config.toml` the same way native Helix's `main` does -
     // now that `/` is a real (JS-preopened) WASI directory instead of resolving to nothing, a
-    // dropped-in config.toml takes effect here with no further wiring.
+    // `config.toml` seeded at `/.config` (see `helix_loader::config_dir()`) takes effect here
+    // with no further wiring.
     let mut config = match Config::load_default() {
         Ok(config) => config,
         Err(ConfigLoadError::Error(err)) if err.kind() == std::io::ErrorKind::NotFound => {

@@ -634,7 +634,55 @@ pub mod tasks {
         )?;
         std::fs::copy(root.join("logo.svg"), www.join("logo.svg"))?;
 
+        build_runtime_archive(&root, &www)?;
+
         println!("Built helix-wasm for wasm32-wasip1 — serve helix-wasm/www/ directly.");
+        Ok(())
+    }
+
+    // Query files only mattered for the statically-linked grammar set (see
+    // `helix_loader::grammar::get_language`) back when they were `include_str!`-embedded into
+    // the binary; now that they're read from the virtual fs like native Helix reads them from
+    // disk, there's no reason to curate - copy every language's queries same as native Helix
+    // ships them all. `index.js` fetches this one archive, decompresses it with
+    // `DecompressionStream("gzip")`, and unpacks it into the virtual fs's `.config/runtime`
+    // (see `load_runtime_file`) before `hx_init` runs. Themes come along the same way, so any
+    // of them can be selected by name from a dropped-in `config.toml`, not just `custom`.
+    fn build_runtime_archive(root: &std::path::Path, www: &std::path::Path) -> Result<(), DynError> {
+        let src_runtime = root.join("runtime");
+        let archive_file = std::fs::File::create(www.join("runtime.tar.gz"))?;
+        let encoder = flate2::write::GzEncoder::new(archive_file, flate2::Compression::best());
+        let mut builder = tar::Builder::new(encoder);
+
+        let src_queries_dir = src_runtime.join("queries");
+        for lang_entry in std::fs::read_dir(&src_queries_dir)? {
+            let lang_entry = lang_entry?;
+            if !lang_entry.file_type()?.is_dir() {
+                continue;
+            }
+            let lang = lang_entry.file_name();
+            for entry in std::fs::read_dir(lang_entry.path())? {
+                let entry = entry?;
+                let archive_name = format!(
+                    "queries/{}/{}",
+                    lang.to_string_lossy(),
+                    entry.file_name().to_string_lossy()
+                );
+                builder.append_path_with_name(entry.path(), archive_name)?;
+            }
+        }
+
+        let src_themes_dir = src_runtime.join("themes");
+        for entry in std::fs::read_dir(&src_themes_dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let archive_name = format!("themes/{}", entry.file_name().to_string_lossy());
+            builder.append_path_with_name(entry.path(), archive_name)?;
+        }
+
+        builder.into_inner()?.finish()?;
         Ok(())
     }
 
