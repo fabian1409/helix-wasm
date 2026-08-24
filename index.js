@@ -1,6 +1,6 @@
 import WASI from "./vendor/browser_wasi_shim/wasi.js";
 import { Fd } from "./vendor/browser_wasi_shim/fd.js";
-import { ConsoleStdout, Directory, File, PreopenDirectory } from "./vendor/browser_wasi_shim/fs_mem.js";
+import { ConsoleStdout, Directory, File, OpenFile, PreopenDirectory } from "./vendor/browser_wasi_shim/fs_mem.js";
 
 // Linked in index.html via Google Fonts; falls back to the platform default monospace font
 // if that's blocked (offline, ad blocker, etc.) - see the `document.fonts.load` call in
@@ -87,6 +87,7 @@ function rgb(packed) {
 // drag-and-drop.
 async function loadHelixWasm() {
   const rootDir = new Directory(new Map());
+  restoreFs(rootDir);
 
   const wasi = new WASI(
     [],
@@ -202,6 +203,81 @@ function openPath(exports, path) {
   exports.hx_open_path(bytes.length);
 }
 
+const FS_STORAGE_KEY = "helix-wasm:fs";
+
+// Walks `dir` into a JSON-safe tree, skipping ".config/runtime" since that's always
+// re-seeded from runtime.tar.gz on load (see seedRuntimeFiles) and would otherwise burn
+// through localStorage's quota on files that already ship with the app. Files are decoded
+// as UTF-8 text rather than base64 - everything this editor handles is source/config text.
+function serializeDir(dir, path) {
+  const entries = {};
+  for (const [name, entry] of dir.contents) {
+    const childPath = path ? `${path}/${name}` : name;
+    if (childPath === ".config/runtime") continue;
+    entries[name] = entry instanceof Directory
+      ? { dir: serializeDir(entry, childPath) }
+      : { file: new TextDecoder().decode(entry.data) };
+  }
+  return entries;
+}
+
+function populateDir(dir, tree) {
+  for (const [name, node] of Object.entries(tree)) {
+    if (node.dir) {
+      const child = new Directory(new Map());
+      dir.contents.set(name, child);
+      populateDir(child, node.dir);
+    } else {
+      dir.contents.set(name, new File(new TextEncoder().encode(node.file)));
+    }
+  }
+}
+
+function persistFs(rootDir) {
+  try {
+    localStorage.setItem(FS_STORAGE_KEY, JSON.stringify(serializeDir(rootDir, "")));
+  } catch (err) {
+    console.error("helix-wasm: failed to persist virtual fs:", err);
+  }
+}
+
+function restoreFs(rootDir) {
+  const json = localStorage.getItem(FS_STORAGE_KEY);
+  if (!json) return;
+  try {
+    populateDir(rootDir, JSON.parse(json));
+  } catch (err) {
+    console.error("helix-wasm: failed to restore persisted virtual fs:", err);
+  }
+}
+
+// Coalesces the (possibly several, e.g. buffered) fd_write/fd_pwrite calls a single
+// helix-side file write makes into one localStorage write via a microtask, since
+// localStorage.setItem is synchronous and serializing the whole tree on every syscall
+// would be wasteful.
+let persistScheduled = false;
+function schedulePersist(rootDir) {
+  if (persistScheduled) return;
+  persistScheduled = true;
+  Promise.resolve().then(() => {
+    persistScheduled = false;
+    persistFs(rootDir);
+  });
+}
+
+// Only WASI's actual write syscalls land here - editing a buffer only touches Helix's
+// in-memory Rope, so this fires on real disk writes (":w" and friends), not every
+// keystroke. `fsWriteListener` is wired up in main() once `rootDir` exists.
+let fsWriteListener = null;
+for (const method of ["fd_write", "fd_pwrite"]) {
+  const original = OpenFile.prototype[method];
+  OpenFile.prototype[method] = function (...args) {
+    const result = original.apply(this, args);
+    if (result.ret === 0) fsWriteListener?.();
+    return result;
+  };
+}
+
 // Inserts `bytes` at `relPath` (e.g. "src/main.rs") under `rootDir`, creating any
 // intermediate directories, and returns the absolute WASI path.
 function insertFile(rootDir, relPath, bytes) {
@@ -272,6 +348,7 @@ async function handleDrop(exports, rootDir, e) {
   for (const [relPath, bytes] of files) {
     openPath(exports, insertFile(rootDir, relPath, bytes));
   }
+  persistFs(rootDir);
 }
 
 // Reads a USTAR archive (as built by `tar::Builder` in xtask/src/main.rs's
@@ -326,6 +403,7 @@ async function seedRuntimeFiles(rootDir) {
 
 async function main() {
   const { exports, rootDir } = await loadHelixWasm();
+  fsWriteListener = () => schedulePersist(rootDir);
   await seedRuntimeFiles(rootDir);
 
   const canvas = document.getElementById("screen");
