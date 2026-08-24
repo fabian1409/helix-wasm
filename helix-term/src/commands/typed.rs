@@ -3225,6 +3225,34 @@ fn move_buffer_impl(
     Ok(())
 }
 
+// Native builds delete files via the shell; there's no shell here, so the browser build
+// gets its own `:rm`/`:rmdir` instead.
+#[cfg(target_arch = "wasm32")]
+fn remove_file(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    let path = PathBuf::from(args.first().unwrap().to_string());
+    ensure!(path.is_file(), "not a file: {:?}", path);
+    std::fs::remove_file(&path).map_err(|err| anyhow!("could not remove file: {err}"))?;
+    cx.editor.set_status(format!("Removed {:?}", path));
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn remove_dir(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    let path = PathBuf::from(args.first().unwrap().to_string());
+    ensure!(path.is_dir(), "not a directory: {:?}", path);
+    std::fs::remove_dir_all(&path).map_err(|err| anyhow!("could not remove directory: {err}"))?;
+    cx.editor.set_status(format!("Removed {:?}", path));
+    Ok(())
+}
+
 fn yank_diagnostic(
     cx: &mut compositor::Context,
     args: Args,
@@ -4415,6 +4443,30 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         aliases: &["mv!"],
         doc: "Move the current buffer and its corresponding file to a different path creating necessary subdirectories",
         fun: force_move_buffer,
+        completer: CommandCompleter::positional(&[completers::filename]),
+        signature: Signature {
+            positionals: (1, Some(1)),
+            ..Signature::DEFAULT
+        },
+    },
+    #[cfg(target_arch = "wasm32")]
+    TypableCommand {
+        name: "rm",
+        aliases: &[],
+        doc: "Delete a file",
+        fun: remove_file,
+        completer: CommandCompleter::positional(&[completers::filename]),
+        signature: Signature {
+            positionals: (1, Some(1)),
+            ..Signature::DEFAULT
+        },
+    },
+    #[cfg(target_arch = "wasm32")]
+    TypableCommand {
+        name: "rmdir",
+        aliases: &[],
+        doc: "Delete a directory and its contents",
+        fun: remove_dir,
         completer: CommandCompleter::positional(&[completers::filename]),
         signature: Signature {
             positionals: (1, Some(1)),
